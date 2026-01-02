@@ -1,0 +1,51 @@
+.chat-composer {
+  background-color: #f0f0f0;
+  padding: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.composer-content {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background-color: white;
+  border-radius: 21px;
+  padding: 4px 4px 4px 12px;
+}
+
+.message-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 15px;
+  line-height: 20px;
+  max-height: 100px;
+  padding: 8px 0;
+  font-family: inherit;
+}
+
+.send-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background-color: #25D366;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.2s;
+}
+
+.send-button:hover:not(:disabled) {
+  background-color: #20BA5A;
+}
+
+.send-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+

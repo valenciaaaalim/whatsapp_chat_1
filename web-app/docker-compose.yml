@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  web-app-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: web-app-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./web_app.db
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FRONTEND_URL=http://localhost:3000
+      - XML_EXTRACTOR_URL=http://xml-extractor:8080
+      - SESSION_COOKIE_SECURE=false
+    volumes:
+      - ./backend/data:/app/data  # For SQLite database persistence
+    depends_on:
+      xml-extractor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  xml-extractor:
+    build:
+      context: ./xml-extractor
+      dockerfile: Dockerfile
+    container_name: xml-extractor
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: web-app-network
+

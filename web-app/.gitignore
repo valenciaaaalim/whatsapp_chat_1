@@ -10,8 +10,6 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
-*.pyc
-.pytest_cache/
 
 # Node
 node_modules/
@@ -22,7 +20,6 @@ yarn-error.log*
 .pnp.js
 build/
 dist/
-.next/
 
 # Environment
 .env
@@ -43,13 +40,3 @@ Thumbs.db
 # Docker
 .dockerignore
 
-# Logs
-*.log
-logs/
-
-# Database
-*.db-journal
-
-# Temporary files
-*.tmp
-*.temp

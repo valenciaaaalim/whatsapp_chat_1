@@ -1,0 +1,19 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+
+# Gemini API
+google-generativeai==0.3.2
+
+# Utilities
+python-dotenv==1.0.0
+python-json-logger==2.0.7
+
+# Security
+itsdangerous==2.1.2
+
