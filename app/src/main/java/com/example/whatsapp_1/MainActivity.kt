@@ -6,41 +6,35 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.whatsapp_1.pipeline.PipelineFactory
+import com.example.whatsapp_1.ui.chat.ChatScreen
 import com.example.whatsapp_1.ui.theme.Whatsapp_1Theme
+import com.example.whatsapp_1.viewmodel.ChatViewModel
+import com.example.whatsapp_1.viewmodel.ChatViewModelFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             Whatsapp_1Theme {
-                // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Greeting("Android")
+                    val viewModel: ChatViewModel = viewModel(
+                        factory = ChatViewModelFactory(
+                            preprocessingHook = PipelineFactory.createPreprocessingHook(this),
+                            riskAssessmentHook = PipelineFactory.createRiskAssessmentHook(this)
+                        )
+                    )
+                    ChatScreen(
+                        viewModel = viewModel,
+                        contactName = "John Doe"
+                    )
                 }
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    Whatsapp_1Theme {
-        Greeting("Android")
     }
 }

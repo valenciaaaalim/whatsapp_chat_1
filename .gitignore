@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Secrets
+secrets.properties
+app/secrets.properties
+**/secrets.properties
