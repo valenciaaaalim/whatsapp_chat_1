@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   web-app-backend:
     build:
@@ -16,6 +14,7 @@ services:
       - SESSION_COOKIE_SECURE=false
     volumes:
       - ./backend/data:/app/data  # For SQLite database persistence
+      - ./backend/app/annotated_test.json:/app/annotated_test.json:ro  # Mount the JSON file for seeding (read-only)
     depends_on:
       xml-extractor:
         condition: service_healthy

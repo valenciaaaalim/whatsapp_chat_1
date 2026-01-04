@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 
+# Copy seed script
+COPY seed_data.py .
+
 # Create assets directory if needed
 RUN mkdir -p app/assets
 

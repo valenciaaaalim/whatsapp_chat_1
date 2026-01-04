@@ -56,14 +56,26 @@ def main():
     # Initialize database
     init_db()
     
-    # Find annotated_test.json (located in repository root)
+    # Find annotated_test.json
+    # Try multiple possible locations (local development vs Docker)
     script_dir = Path(__file__).parent.resolve()
-    # Go up from web-app/backend/ to repository root
-    repo_root = script_dir.parent.parent
-    json_path = repo_root / "annotated_test.json"
+    possible_paths = [
+        #Path("/app/annotated_test.json"),  # In Docker container (mounted)
+        #script_dir.parent.parent / "annotated_test.json",  # From web-app/backend/ to repo root
+        #script_dir / "annotated_test.json",  # Same directory
+        script_dir/ "app/annotated_test.json",  # From web-app/ to repo root
+    ]
     
-    if not json_path.exists():
-        print(f"Error: {json_path} not found")
+    json_path = None
+    for path in possible_paths:
+        if path.exists():
+            json_path = path
+            break
+    
+    if not json_path:
+        print(f"Error: annotated_test.json not found. Tried:")
+        for path in possible_paths:
+            print(f"  - {path}")
         sys.exit(1)
     
     # Load conversations
