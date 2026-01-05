@@ -21,6 +21,14 @@ def submit_survey_response(
     participant = db.query(Participant).filter(Participant.id == participant_id).first()
     if not participant:
         raise HTTPException(status_code=404, detail="Participant not found")
+
+    existing = db.query(SurveyResponse).filter(
+        SurveyResponse.participant_id == participant_id,
+        SurveyResponse.survey_type == response.survey_type,
+        SurveyResponse.question_id == response.question_id
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Survey response already submitted")
     
     # Create survey response
     survey_response = SurveyResponse(
@@ -60,4 +68,3 @@ def get_survey_responses(
         }
         for r in responses
     ]
-

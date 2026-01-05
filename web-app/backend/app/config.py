@@ -2,15 +2,17 @@
 Configuration settings for the web app backend.
 """
 import os
+from pathlib import Path
 from typing import List, Optional
 
 class Settings:
     """Application settings."""
     
     # Database
+    _default_db_path = (Path(__file__).resolve().parent.parent / "data" / "web_app.db")
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "sqlite:///./web_app.db"
+        f"sqlite:///{_default_db_path}"
     )
     
     # CORS settings
@@ -59,4 +61,3 @@ class Settings:
 
 
 settings = Settings()
-

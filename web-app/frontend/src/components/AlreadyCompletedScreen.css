@@ -1,0 +1,42 @@
+.already-completed-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: #f3f6f8;
+  padding: 20px;
+}
+
+.already-completed-content {
+  max-width: 520px;
+  background: #ffffff;
+  padding: 32px;
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.already-completed-content h1 {
+  margin: 0 0 12px;
+  color: #0b3a2a;
+}
+
+.already-completed-content p {
+  margin: 8px 0;
+  color: #374151;
+}
+
+.already-completed-button {
+  margin-top: 20px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 999px;
+  background: #128c7e;
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.already-completed-button:hover {
+  background: #0f766e;
+}

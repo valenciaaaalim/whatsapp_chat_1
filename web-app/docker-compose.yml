@@ -7,7 +7,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=sqlite:///./web_app.db
+      - DATABASE_URL=sqlite:///./data/web_app.db  # Changed to match volume mount
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - FRONTEND_URL=http://localhost:3000
       - XML_EXTRACTOR_URL=http://xml-extractor:8080
@@ -24,6 +24,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  web-app-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: web-app-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      web-app-backend:
+        condition: service_healthy
 
   xml-extractor:
     build:
@@ -42,4 +55,3 @@ services:
 networks:
   default:
     name: web-app-network
-

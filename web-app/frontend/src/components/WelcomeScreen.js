@@ -6,7 +6,7 @@ function WelcomeScreen({ participantId, variant }) {
   const navigate = useNavigate();
 
   const handleStart = () => {
-    navigate('/conversation/0');
+    navigate('/survey/pre');
   };
 
   return (

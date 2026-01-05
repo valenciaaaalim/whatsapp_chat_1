@@ -9,7 +9,7 @@ import './ConversationScreen.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-function ConversationScreen({ conversation, sessionId, participantId, variant, onComplete, conversationIndex }) {
+function ConversationScreen({ conversation, sessionId, participantId, participantProlificId, variant, onComplete, conversationIndex }) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [draftText, setDraftText] = useState('');
@@ -85,6 +85,13 @@ function ConversationScreen({ conversation, sessionId, participantId, variant, o
     
     // Capture user input
     try {
+      await axios.post(`${API_BASE_URL}/api/participant-records/message`, {
+        participant_id: participantProlificId,
+        conversation_index: conversationIndex,
+        final_message: finalText,
+        variant
+      });
+
       if (warningState) {
         await axios.post(`${API_BASE_URL}/api/user-inputs/with-warning`, {
           session_id: sessionId,
@@ -195,4 +202,3 @@ function ConversationScreen({ conversation, sessionId, participantId, variant, o
 }
 
 export default ConversationScreen;
-

@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app.models import Participant
-from app.schemas import ParticipantCreate, ParticipantSchema
+from app.schemas import ParticipantCreate, ParticipantSchema, ParticipantCreateResponse
+from app.config import settings
 import random
+from urllib.parse import urlencode
 
 router = APIRouter(prefix="/api/participants", tags=["participants"])
 
@@ -26,8 +28,18 @@ def assign_variant(db: Session) -> str:
     else:
         return "B"
 
+def build_completion_url(prolific_id: str | None) -> str:
+    """Build the Prolific completion URL for a participant."""
+    base_url = settings.PROLIFIC_COMPLETION_URL
+    params = {}
+    if prolific_id:
+        params["PROLIFIC_PID"] = prolific_id
+    if params:
+        return f"{base_url}?{urlencode(params)}"
+    return base_url
 
-@router.post("", response_model=ParticipantSchema)
+
+@router.post("", response_model=ParticipantCreateResponse)
 def create_participant(
     participant_data: ParticipantCreate,
     db: Session = Depends(get_db)
@@ -39,7 +51,15 @@ def create_participant(
             Participant.prolific_id == participant_data.prolific_id
         ).first()
         if existing:
-            return ParticipantSchema.from_orm(existing)
+            status = "completed" if existing.completed_at else "existing"
+            completion_url = build_completion_url(existing.prolific_id) if existing.completed_at else None
+            return ParticipantCreateResponse(
+                id=existing.id,
+                prolific_id=existing.prolific_id,
+                variant=existing.variant,
+                status=status,
+                completion_url=completion_url
+            )
     
     # Assign variant
     variant = assign_variant(db)
@@ -53,7 +73,13 @@ def create_participant(
     db.commit()
     db.refresh(participant)
     
-    return ParticipantSchema.from_orm(participant)
+    return ParticipantCreateResponse(
+        id=participant.id,
+        prolific_id=participant.prolific_id,
+        variant=participant.variant,
+        status="new",
+        completion_url=None
+    )
 
 
 @router.get("/{participant_id}", response_model=ParticipantSchema)
@@ -66,4 +92,3 @@ def get_participant(
     if not participant:
         raise HTTPException(status_code=404, detail="Participant not found")
     return ParticipantSchema.from_orm(participant)
-

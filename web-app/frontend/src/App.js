@@ -5,6 +5,7 @@ import WelcomeScreen from './components/WelcomeScreen';
 import ConversationScreen from './components/ConversationScreen';
 import SurveyScreen from './components/SurveyScreen';
 import CompletionScreen from './components/CompletionScreen';
+import AlreadyCompletedScreen from './components/AlreadyCompletedScreen';
 import './App.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
@@ -12,6 +13,9 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 function App() {
   const [participantId, setParticipantId] = useState(null);
   const [variant, setVariant] = useState(null);
+  const [participantStatus, setParticipantStatus] = useState('new');
+  const [completionUrl, setCompletionUrl] = useState('');
+  const [prolificId, setProlificId] = useState('');
   const [currentConversationIndex, setCurrentConversationIndex] = useState(0);
   const [conversations, setConversations] = useState([]);
   const [sessionIds, setSessionIds] = useState([]);
@@ -23,11 +27,16 @@ function App() {
     loadConversations();
   }, []);
 
+  const generateLocalProlificId = () => {
+    const randomPart = Math.random().toString(36).slice(2, 8);
+    return `local_${Date.now()}_${randomPart}`;
+  };
+
   const initializeParticipant = async () => {
     try {
       // Get prolific ID from URL params if present
       const urlParams = new URLSearchParams(window.location.search);
-      const prolificId = urlParams.get('PROLIFIC_PID') || null;
+      const prolificId = urlParams.get('PROLIFIC_PID') || generateLocalProlificId();
 
       const response = await axios.post(`${API_BASE_URL}/api/participants`, {
         prolific_id: prolificId
@@ -35,6 +44,9 @@ function App() {
       
       setParticipantId(response.data.id);
       setVariant(response.data.variant);
+      setParticipantStatus(response.data.status || 'new');
+      setCompletionUrl(response.data.completion_url || '');
+      setProlificId(prolificId);
     } catch (error) {
       console.error('Error initializing participant:', error);
     } finally {
@@ -73,6 +85,10 @@ function App() {
     return <div className="loading">Loading...</div>;
   }
 
+  if (participantStatus === 'completed') {
+    return <AlreadyCompletedScreen completionUrl={completionUrl} />;
+  }
+
   if (!participantId) {
     return <div className="error">Error initializing participant</div>;
   }
@@ -98,6 +114,7 @@ function App() {
                   conversation={conversations[currentConversationIndex]}
                   sessionId={sessionIds[currentConversationIndex]}
                   participantId={participantId}
+                  participantProlificId={prolificId}
                   variant={variant}
                   onComplete={handleConversationComplete}
                   conversationIndex={currentConversationIndex}
@@ -112,6 +129,8 @@ function App() {
             element={
               <SurveyScreen
                 participantId={participantId}
+                participantProlificId={prolificId}
+                variant={variant}
               />
             } 
           />
@@ -130,4 +149,3 @@ function App() {
 }
 
 export default App;
-

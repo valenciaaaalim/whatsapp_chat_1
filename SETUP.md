@@ -84,3 +84,111 @@ The `formatConversationHistoryAsXml()` function currently uses a placeholder for
 - With API key: Full pipeline runs, but GLiNER is still stubbed
 - To test warnings: Modify `StubRiskAssessmentHook` to return a mock `WarningState`
 
+
+## Start the local host
+```
+conda activate ner
+
+cd backend
+python seed_data.py (to start the database and seed the conversations)
+access via SQlite DB
+
+cd frontend
+npm install
+npm start
+access via http://localhost:3000
+```
+
+## Run with Docker
+```
+conda activate ner
+cd web-app
+
+docker-compose down
+rm backend/data/web_app.db
+
+# (Optional) Remove old Docker images to force rebuild
+docker-compose build --no-cache
+
+# Start all services (backend, frontend, xml-extractor)
+docker-compose up -d
+
+# Wait for services to be healthy (about 30-40 seconds)
+# Check status
+docker-compose ps
+
+# in another terminal
+cd web-app
+docker-compose exec web-app-backend python seed_data.py
+```
+
+
+```
+chmod +x reset_and_start.sh
+./reset_and_start.sh
+```
+
+
+```
+# Reset everything
+docker-compose down && rm backend/data/web_app.db && docker-compose up -d && sleep 15 && docker-compose exec web-app-backend python seed_data.py
+
+# View logs
+docker-compose logs -f web-app-backend
+docker-compose logs -f web-app-frontend
+
+# Restart a service
+docker-compose restart web-app-backend
+
+# Rebuild after code changes
+docker-compose build web-app-backend
+docker-compose up -d web-app-backend
+docker-compose build --no-cache #Rebuilds all services without using cache
+docker-compose build --no-cache web-app-frontend #Rebuilds only frontend
+docker-compose build --no-cache web-app-backend #Rebuilds only backend
+docker-compose down --rmi all #Removes containers and images (more aggressive)
+
+# Access database
+sqlite3 backend/data/web_app.db
+
+# Export database
+sqlite3 backend/data/web_app.db .dump > backup.sql
+```
+
+
+```
+## extreme reset
+#!/bin/bash
+set -e
+
+echo "🛑 Stopping containers..."
+docker-compose down
+
+echo "🗑️  Removing old database..."
+rm -f backend/data/web_app.db
+
+echo "🧹 Removing old images (optional - uncomment if needed)..."
+# Uncomment the next line to remove old images too (more aggressive cleanup)
+# docker-compose down --rmi all
+
+echo "🔨 Rebuilding containers (no cache)..."
+docker-compose build --no-cache
+
+echo "🚀 Starting containers..."
+docker-compose up -d
+
+echo "⏳ Waiting for services to be healthy..."
+sleep 20
+
+echo "🌱 Seeding conversation data..."
+docker-compose exec -T web-app-backend python seed_data.py
+
+echo "✅ Setup complete!"
+echo ""
+echo "Frontend: http://localhost:3000"
+echo "Backend API: http://localhost:8000"
+echo "Health check: http://localhost:8000/health"
+echo ""
+echo "To view database:"
+echo "  sqlite3 backend/data/web_app.db"
+```

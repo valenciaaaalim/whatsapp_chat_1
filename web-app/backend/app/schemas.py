@@ -101,8 +101,65 @@ class ParticipantSchema(BaseModel):
         from_attributes = True
 
 
+class ParticipantCreateResponse(BaseModel):
+    """Participant creation response."""
+    id: int
+    prolific_id: Optional[str]
+    variant: str
+    status: str  # 'new', 'existing', 'completed'
+    completion_url: Optional[str] = None
+
+
 # Completion schema
 class CompletionRequest(BaseModel):
     """Completion request."""
     prolific_completion_code: Optional[str] = None
 
+
+class ParticipantRecordMessage(BaseModel):
+    """Record the final message for a conversation."""
+    participant_id: str
+    conversation_index: int
+    final_message: str
+    variant: Optional[str] = None
+
+
+class ParticipantRecordPreSurvey(BaseModel):
+    """Record pre-study survey (4 Likert items)."""
+    participant_id: str
+    answers: List[str] = Field(..., min_length=4, max_length=4)
+    variant: Optional[str] = None
+
+
+class ParticipantRecordMidSurveyA(BaseModel):
+    """Record Variant A mid-survey (3 questions per conversation)."""
+    participant_id: str
+    conversation_index: int
+    q1: str  # "The warning was clear."
+    q2: str  # "The warning helped me notice something new."
+    q3: str  # "The suggested rewrite preserved what I wanted to say."
+    variant: Optional[str] = None
+
+
+class ParticipantRecordMidSurveyB(BaseModel):
+    """Record Variant B mid-survey (2 questions per conversation)."""
+    participant_id: str
+    conversation_index: int
+    q1: str  # "Which type of personal information did you end up disclosing?" (multi-choice)
+    q2: str  # "How likely is it that the other person was malicious?" (1–5)
+    variant: Optional[str] = None
+
+
+class ParticipantRecordSus(BaseModel):
+    """Record SUS answers (10 questions)."""
+    participant_id: str
+    answers: List[str] = Field(..., min_length=10, max_length=10)
+    variant: Optional[str] = None
+
+
+class ParticipantRecordPostExtra(BaseModel):
+    """Record post-survey extra questions for Variant A (2 questions)."""
+    participant_id: str
+    trust: str  # "Overall, I trusted the information presented by the system/interface." (1–7)
+    realism: str  # "Overall, the study tasks felt realistic." (1–5)
+    variant: Optional[str] = None

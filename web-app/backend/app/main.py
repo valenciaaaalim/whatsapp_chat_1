@@ -17,7 +17,8 @@ from app.routers import (
     risk_assessment,
     user_inputs,
     surveys,
-    completion
+    completion,
+    participant_records
 )
 
 # Configure logging
@@ -51,6 +52,7 @@ app.include_router(risk_assessment.router)
 app.include_router(user_inputs.router)
 app.include_router(surveys.router)
 app.include_router(completion.router)
+app.include_router(participant_records.router)
 
 
 @app.on_event("startup")
@@ -87,4 +89,3 @@ async def global_exception_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
-
