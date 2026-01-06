@@ -216,22 +216,26 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
 
     setSubmitting(true);
     try {
-      // Submit all responses to survey_responses table
+      // Submit all responses to survey_responses table in question order (top to bottom)
       await Promise.all(
-        Object.entries(responses).map(([questionId, response]) => {
-          const question = questions.find(q => q.id === questionId);
-          if (!question) {
-            console.error(`Question not found for ID: ${questionId}`);
-            console.error('Available questions:', questions.map(q => q.id));
-            console.error('Response keys:', Object.keys(responses));
-            return Promise.resolve(); // Skip invalid responses
+        questions.map((question, index) => {
+          const response = responses[question.id];
+          if (response === undefined || response === null || response === '') {
+            console.warn(`No response for question ${question.id}`);
+            return Promise.resolve(); // Skip unanswered questions
+          }
+          // Handle "Other" option for Group B mid-survey
+          let responseValue = response;
+          if (question.id === 'midB_q1' && response === 'Other' && otherText.trim()) {
+            responseValue = `Other: ${otherText.trim()}`;
           }
           return axios.post(`${API_BASE_URL}/api/surveys/responses`, {
             survey_type: surveyInstance,
-            question_id: questionId,
+            question_id: question.id,
             question_text: question.question,
-            response_text: typeof response === 'string' ? response : null,
-            response_json: typeof response === 'object' ? response : null
+            question_order: index + 1,  // Store question order (1, 2, 3, ...)
+            response_text: typeof responseValue === 'string' ? responseValue : null,
+            response_json: typeof responseValue === 'object' ? responseValue : null
           }, {
             params: { participant_id: participantId }
           });

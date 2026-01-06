@@ -81,6 +81,7 @@ class SurveyResponseSchema(BaseModel):
     survey_type: str  # 'pre', 'mid', 'post', 'comprehension'
     question_id: str
     question_text: str
+    question_order: Optional[int] = None  # Order of question in survey (1, 2, 3, ...)
     response_text: Optional[str] = None
     response_json: Optional[Dict[str, Any]] = None
 

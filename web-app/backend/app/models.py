@@ -30,6 +30,7 @@ class ConversationSession(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     participant_id = Column(Integer, ForeignKey("participants.id"), nullable=False)
+    prolific_id = Column(String, nullable=True, index=True)  # Store prolific_id for easier querying
     conversation_id = Column(Integer, nullable=False)  # 1000, 1001, or 1002 from annotated_test.json
     scenario = Column(String, nullable=False)  # e.g., "Academic Collaboration"
     current_message_index = Column(Integer, default=0)  # Track progress through conversation
@@ -81,6 +82,8 @@ class SurveyResponse(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     participant_id = Column(Integer, ForeignKey("participants.id"), nullable=False)
+    prolific_id = Column(String, nullable=True, index=True)  # Store prolific_id for easier querying
+    question_order = Column(Integer, nullable=True)  # Store question order (1, 2, 3, ...) for sorting
     survey_type = Column(String, nullable=False)  # 'pre', 'mid', 'post', 'comprehension'
     question_id = Column(String, nullable=False)
     question_text = Column(Text, nullable=False)

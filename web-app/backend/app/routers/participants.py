@@ -46,7 +46,7 @@ def create_participant(
     db: Session = Depends(get_db)
 ):
     """Create a new participant and assign to variant A or B."""
-    # Check if participant already exists
+    # Check if participant already exists (by prolific_id if provided, or by any existing record if prolific_id is None)
     if participant_data.prolific_id:
         existing = db.query(Participant).filter(
             Participant.prolific_id == participant_data.prolific_id
@@ -61,6 +61,13 @@ def create_participant(
                 status=status,
                 completion_url=completion_url
             )
+    else:
+        # If no prolific_id provided, don't create duplicate participants
+        # This prevents creating multiple participants with null prolific_id
+        raise HTTPException(
+            status_code=400, 
+            detail="prolific_id is required. Please provide PROLIFIC_PID in URL or ensure prolific_id is set."
+        )
     
     # Assign variant
     variant = assign_variant(db)

@@ -46,12 +46,16 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [sessionIds, setSessionIds] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    // Initialize participant
-    initializeParticipant();
-    loadConversations();
-  }, []);
+    // Initialize participant only once
+    if (!initialized) {
+      initializeParticipant();
+      loadConversations();
+      setInitialized(true);
+    }
+  }, [initialized]);
 
   const generateLocalProlificId = () => {
     const randomPart = Math.random().toString(36).slice(2, 8);

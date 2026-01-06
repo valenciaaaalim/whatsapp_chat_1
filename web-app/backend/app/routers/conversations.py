@@ -114,6 +114,7 @@ def create_session(
     # Create new session
     session = ConversationSession(
         participant_id=participant_id,
+        prolific_id=participant.prolific_id,  # Store prolific_id for easier querying
         conversation_id=conversation_id,
         scenario=conv.scenario,
         current_message_index=0,
