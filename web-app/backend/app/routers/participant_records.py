@@ -23,14 +23,14 @@ def get_or_create_record(
     variant: str | None = None
 ) -> ParticipantRecord:
     record = db.query(ParticipantRecord).filter(
-        ParticipantRecord.participant_id == participant_id
+        ParticipantRecord.prolific_id == participant_id
     ).first()
     if record:
         if variant and not record.variant:
             record.variant = variant
             db.commit()
         return record
-    record = ParticipantRecord(participant_id=participant_id, variant=variant)
+    record = ParticipantRecord(prolific_id=participant_id, variant=variant)
     db.add(record)
     db.commit()
     db.refresh(record)
@@ -59,6 +59,10 @@ def record_pre_survey(
     db: Session = Depends(get_db)
 ):
     """Record pre-study survey (4 Likert items) - both variants."""
+    # Ensure we have exactly 4 answers
+    if len(payload.answers) != 4:
+        raise HTTPException(status_code=400, detail=f"Expected 4 pre-survey answers, got {len(payload.answers)}")
+    
     record = get_or_create_record(db, payload.participant_id, payload.variant)
     for idx, answer in enumerate(payload.answers, start=1):
         setattr(record, f"pre_{idx}", answer)
@@ -112,10 +116,18 @@ def record_sus(
     participant = db.query(Participant).filter(
         Participant.prolific_id == payload.participant_id
     ).first()
+    
+    # Allow if participant not found (for local testing) or if variant is A
     if participant and participant.variant != "A":
-        return {"status": "skipped"}
+        return {"status": "skipped", "message": "SUS survey is only for Variant A"}
 
-    record = get_or_create_record(db, payload.participant_id, participant.variant if participant else None)
+    # Get variant from participant if found, otherwise use payload variant
+    variant = participant.variant if participant else (payload.variant or "A")
+    record = get_or_create_record(db, payload.participant_id, variant)
+    
+    if len(payload.answers) != 10:
+        raise HTTPException(status_code=400, detail=f"Expected 10 SUS answers, got {len(payload.answers)}")
+    
     for idx, answer in enumerate(payload.answers, start=1):
         setattr(record, f"sus_{idx}", answer)
     db.commit()
@@ -132,10 +144,18 @@ def record_post_extra(
     participant = db.query(Participant).filter(
         Participant.prolific_id == payload.participant_id
     ).first()
+    
+    # Allow if participant not found (for local testing) or if variant is A
     if participant and participant.variant != "A":
-        return {"status": "skipped"}
+        return {"status": "skipped", "message": "Post-survey extra questions are only for Variant A"}
 
-    record = get_or_create_record(db, payload.participant_id, participant.variant if participant else None)
+    # Get variant from participant if found, otherwise use payload variant
+    variant = participant.variant if participant else (payload.variant or "A")
+    record = get_or_create_record(db, payload.participant_id, variant)
+    
+    if not payload.trust or not payload.realism:
+        raise HTTPException(status_code=400, detail="Both trust and realism answers are required")
+    
     record.post_trust = payload.trust
     record.post_realism = payload.realism
     db.commit()

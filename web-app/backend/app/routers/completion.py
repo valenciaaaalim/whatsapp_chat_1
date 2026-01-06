@@ -10,6 +10,7 @@ from app.schemas import CompletionRequest
 from app.config import settings
 from urllib.parse import urlencode
 from datetime import datetime
+from app.utils import get_singapore_time
 
 router = APIRouter(prefix="/api/completion", tags=["completion"])
 
@@ -26,15 +27,15 @@ def get_prolific_completion_url(
         raise HTTPException(status_code=404, detail="Participant not found")
 
     if participant.completed_at is None:
-        participant.completed_at = datetime.utcnow()
+        participant.completed_at = get_singapore_time()
         db.commit()
 
     if participant.prolific_id:
         record = db.query(ParticipantRecord).filter(
-            ParticipantRecord.participant_id == participant.prolific_id
+            ParticipantRecord.prolific_id == participant.prolific_id
         ).first()
         if record and record.completed_at is None:
-            record.completed_at = participant.completed_at
+            record.completed_at = get_singapore_time()
             if record.created_at and record.completed_at:
                 delta = record.completed_at - record.created_at
                 record.duration_of_study = delta.total_seconds()
@@ -68,15 +69,15 @@ def redirect_to_prolific(
         raise HTTPException(status_code=404, detail="Participant not found")
 
     if participant.completed_at is None:
-        participant.completed_at = datetime.utcnow()
+        participant.completed_at = get_singapore_time()
         db.commit()
 
     if participant.prolific_id:
         record = db.query(ParticipantRecord).filter(
-            ParticipantRecord.participant_id == participant.prolific_id
+            ParticipantRecord.prolific_id == participant.prolific_id
         ).first()
         if record and record.completed_at is None:
-            record.completed_at = participant.completed_at
+            record.completed_at = get_singapore_time()
             if record.created_at and record.completed_at:
                 delta = record.completed_at - record.created_at
                 record.duration_of_study = delta.total_seconds()

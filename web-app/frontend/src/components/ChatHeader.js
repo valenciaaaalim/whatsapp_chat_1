@@ -11,7 +11,6 @@ function ChatHeader({ contactName, scenario }) {
         </div>
         <div className="contact-info">
           <div className="contact-name">{contactName}</div>
-          <div className="scenario-badge">{scenario}</div>
         </div>
       </div>
     </div>

@@ -160,6 +160,6 @@ class ParticipantRecordSus(BaseModel):
 class ParticipantRecordPostExtra(BaseModel):
     """Record post-survey extra questions for Variant A (2 questions)."""
     participant_id: str
-    trust: str  # "Overall, I trusted the information presented by the system/interface." (1–7)
-    realism: str  # "Overall, the study tasks felt realistic." (1–5)
+    trust: str  # "Overall, I trusted the information presented by the system/interface." (1–5 Likert scale)
+    realism: str  # "Overall, the study tasks felt realistic." (1–5 Likert scale)
     variant: Optional[str] = None

@@ -44,7 +44,7 @@ class ConversationSession(Base):
 
 class UserInput(Base):
     """User input capture - stores text before Rewrite/Ignore and final submitted text."""
-    __tablename__ = "user_inputs"
+    __tablename__ = "user_inputs (ignore)"
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("conversation_sessions.id"), nullable=False)
@@ -97,7 +97,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
     
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, unique=True, nullable=False)  # 1000, 1001, 1002
+    conversation_id = Column(Integer, unique=True, nullable=False, index=True)  # 1000, 1001, 1002
     scenario = Column(String, nullable=False)
     conversation_data = Column(JSON, nullable=False)  # Full conversation JSON
     ground_truth = Column(JSON, nullable=False)  # Ground truth data
@@ -120,7 +120,7 @@ class ParticipantRecord(Base):
     """Flattened participant response record for analysis/export."""
     __tablename__ = "participant_records"
 
-    participant_id = Column(String, primary_key=True)
+    prolific_id = Column(String, primary_key=True)
     variant = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -181,5 +181,5 @@ class ParticipantRecord(Base):
     sus_10 = Column(Text, nullable=True)
 
     # Post-survey: Extra questions (Variant A only)
-    post_trust = Column(Text, nullable=True)  # "Overall, I trusted the information presented by the system/interface." (1–7)
-    post_realism = Column(Text, nullable=True)  # "Overall, the study tasks felt realistic." (1–5)
+    post_trust = Column(Text, nullable=True)  # "Overall, I trusted the information presented by the system/interface." (1–5 Likert scale)
+    post_realism = Column(Text, nullable=True)  # "Overall, the study tasks felt realistic." (1–5 Likert scale)

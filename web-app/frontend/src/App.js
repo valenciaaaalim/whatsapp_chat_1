@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import WelcomeScreen from './components/WelcomeScreen';
 import ConversationScreen from './components/ConversationScreen';
@@ -9,6 +9,32 @@ import AlreadyCompletedScreen from './components/AlreadyCompletedScreen';
 import './App.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// Component to handle conversation route with index parameter
+function ConversationRoute({ conversations, sessionIds, participantId, prolificId, variant, onComplete }) {
+  const { index } = useParams();
+  const conversationIndex = parseInt(index || '0', 10);
+  
+  if (conversations.length === 0) {
+    return <div className="loading">Loading conversations...</div>;
+  }
+  
+  if (conversationIndex >= conversations.length || conversationIndex < 0) {
+    return <Navigate to="/completion" />;
+  }
+  
+  return (
+    <ConversationScreen
+      conversation={conversations[conversationIndex]}
+      sessionId={sessionIds[conversationIndex]}
+      participantId={participantId}
+      participantProlificId={prolificId}
+      variant={variant}
+      onComplete={onComplete}
+      conversationIndex={conversationIndex}
+    />
+  );
+}
 
 function App() {
   const [participantId, setParticipantId] = useState(null);
@@ -58,22 +84,32 @@ function App() {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/conversations/seed`);
       setConversations(response.data);
-      
-      // Create sessions for all conversations
-      if (participantId) {
-        const sessions = await Promise.all(
-          response.data.map(conv => 
-            axios.post(
-              `${API_BASE_URL}/api/conversations/sessions/${participantId}/${conv.conversation_id}`
-            )
-          )
-        );
-        setSessionIds(sessions.map(s => s.data.id));
-      }
     } catch (error) {
       console.error('Error loading conversations:', error);
     }
   };
+
+  // Create sessions when participantId and conversations are available
+  useEffect(() => {
+    const createSessions = async () => {
+      if (participantId && conversations.length > 0 && sessionIds.length === 0) {
+        try {
+          const sessions = await Promise.all(
+            conversations.map(conv => 
+              axios.post(
+                `${API_BASE_URL}/api/conversations/sessions/${participantId}/${conv.conversation_id}`
+              )
+            )
+          );
+          setSessionIds(sessions.map(s => s.data.id));
+        } catch (error) {
+          console.error('Error creating sessions:', error);
+        }
+      }
+    };
+    createSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [participantId, conversations.length]);
 
   const handleConversationComplete = () => {
     if (currentConversationIndex < conversations.length - 1) {
@@ -101,7 +137,7 @@ function App() {
             path="/" 
             element={
               <WelcomeScreen 
-                participantId={participantId}
+                prolificId={prolificId}
                 variant={variant}
               />
             } 
@@ -109,19 +145,14 @@ function App() {
           <Route 
             path="/conversation/:index" 
             element={
-              currentConversationIndex < conversations.length ? (
-                <ConversationScreen
-                  conversation={conversations[currentConversationIndex]}
-                  sessionId={sessionIds[currentConversationIndex]}
-                  participantId={participantId}
-                  participantProlificId={prolificId}
-                  variant={variant}
-                  onComplete={handleConversationComplete}
-                  conversationIndex={currentConversationIndex}
-                />
-              ) : (
-                <Navigate to="/completion" />
-              )
+              <ConversationRoute
+                conversations={conversations}
+                sessionIds={sessionIds}
+                participantId={participantId}
+                prolificId={prolificId}
+                variant={variant}
+                onComplete={handleConversationComplete}
+              />
             } 
           />
           <Route 

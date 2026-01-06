@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import './WelcomeScreen.css';
 
-function WelcomeScreen({ participantId, variant }) {
+function WelcomeScreen({ prolificId, variant }) {
   const navigate = useNavigate();
 
   const handleStart = () => {
@@ -31,7 +31,9 @@ function WelcomeScreen({ participantId, variant }) {
         <button className="start-button" onClick={handleStart}>
           Start Study
         </button>
-        <p className="variant-info">Participant ID: {participantId} | Variant: {variant}</p>
+        {prolificId && (
+          <p className="variant-info">Prolific ID: {prolificId} | Variant: {variant}</p>
+        )}
       </div>
     </div>
   );

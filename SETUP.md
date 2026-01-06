@@ -122,11 +122,11 @@ cd web-app
 docker-compose exec web-app-backend python seed_data.py
 ```
 
-
-```
-chmod +x reset_and_start.sh
-./reset_and_start.sh
-```
+docker-compose down
+rm backend/data/web_app.db
+docker-compose build --no-cache
+docker-compose up -d
+docker-compose exec web-app-backend python seed_data.py
 
 
 ```
@@ -156,39 +156,3 @@ sqlite3 backend/data/web_app.db .dump > backup.sql
 ```
 
 
-```
-## extreme reset
-#!/bin/bash
-set -e
-
-echo "🛑 Stopping containers..."
-docker-compose down
-
-echo "🗑️  Removing old database..."
-rm -f backend/data/web_app.db
-
-echo "🧹 Removing old images (optional - uncomment if needed)..."
-# Uncomment the next line to remove old images too (more aggressive cleanup)
-# docker-compose down --rmi all
-
-echo "🔨 Rebuilding containers (no cache)..."
-docker-compose build --no-cache
-
-echo "🚀 Starting containers..."
-docker-compose up -d
-
-echo "⏳ Waiting for services to be healthy..."
-sleep 20
-
-echo "🌱 Seeding conversation data..."
-docker-compose exec -T web-app-backend python seed_data.py
-
-echo "✅ Setup complete!"
-echo ""
-echo "Frontend: http://localhost:3000"
-echo "Backend API: http://localhost:8000"
-echo "Health check: http://localhost:8000/health"
-echo ""
-echo "To view database:"
-echo "  sqlite3 backend/data/web_app.db"
-```

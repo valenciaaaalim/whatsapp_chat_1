@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
-from app.models import Participant
+from app.models import Participant, ParticipantRecord
 from app.schemas import ParticipantCreate, ParticipantSchema, ParticipantCreateResponse
 from app.config import settings
+from app.utils import get_singapore_time
 import random
 from urllib.parse import urlencode
 
@@ -16,17 +17,17 @@ router = APIRouter(prefix="/api/participants", tags=["participants"])
 
 def assign_variant(db: Session) -> str:
     """
-    Assign participant to variant A or B, balancing groups.
+    Assign participant to variant A or B, alternating between A and B.
     """
-    # Count current assignments
-    count_a = db.query(func.count(Participant.id)).filter(Participant.variant == "A").scalar() or 0
-    count_b = db.query(func.count(Participant.id)).filter(Participant.variant == "B").scalar() or 0
+    # Get the last participant's variant to alternate
+    last_participant = db.query(Participant).order_by(Participant.id.desc()).first()
     
-    # Balance assignment
-    if count_a <= count_b:
+    if not last_participant:
+        # First participant gets A
         return "A"
-    else:
-        return "B"
+    
+    # Alternate: if last was A, assign B; if last was B, assign A
+    return "B" if last_participant.variant == "A" else "A"
 
 def build_completion_url(prolific_id: str | None) -> str:
     """Build the Prolific completion URL for a participant."""
@@ -72,6 +73,21 @@ def create_participant(
     db.add(participant)
     db.commit()
     db.refresh(participant)
+    
+    # Create corresponding participant_record entry (empty record, will be filled as they progress)
+    if participant.prolific_id:
+        existing_record = db.query(ParticipantRecord).filter(
+            ParticipantRecord.prolific_id == participant.prolific_id
+        ).first()
+        if not existing_record:
+            # Set created_at to Singapore time explicitly
+            record = ParticipantRecord(
+                prolific_id=participant.prolific_id,
+                variant=variant,
+                created_at=get_singapore_time()
+            )
+            db.add(record)
+            db.commit()
     
     return ParticipantCreateResponse(
         id=participant.id,

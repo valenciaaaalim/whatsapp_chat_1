@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import axios from 'axios';
 import './SurveyScreen.css';
@@ -61,7 +61,7 @@ const MID_SURVEY_B_QUESTIONS = [
     id: 'midB_q1',
     question: 'Which type of personal information did you end up disclosing?',
     type: 'multiple_choice',
-    options: ['Name', 'Email address', 'Phone number', 'Address', 'Financial information', 'Other', 'None']
+    options: ['Name', 'Email address', 'Phone number', 'Address', 'Financial information', 'None', 'Other']
   },
   {
     id: 'midB_q2',
@@ -141,16 +141,14 @@ const POST_EXTRA_QUESTIONS = [
   {
     id: 'post_trust',
     question: 'Overall, I trusted the information presented by the system/interface.',
-    type: 'scale',
-    scale: 7,
-    labels: ['1', '2', '3', '4', '5', '6', '7']
+    type: 'likert',
+    scale: 5
   },
   {
     id: 'post_realism',
     question: 'Overall, the study tasks felt realistic.',
-    type: 'scale',
-    scale: 5,
-    labels: ['1', '2', '3', '4', '5']
+    type: 'likert',
+    scale: 5
   }
 ];
 
@@ -174,18 +172,45 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   
   const [responses, setResponses] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [otherText, setOtherText] = useState(''); // For "Other" option text input
   const surveyInstance =
     surveyType === 'mid' && conversationIndex !== null
       ? `${surveyType}_${conversationIndex}`
       : surveyType;
 
+  // Reset otherText when survey type or conversation index changes
+  useEffect(() => {
+    setOtherText('');
+    setResponses({});
+  }, [surveyType, conversationIndex]);
+
   const handleResponse = (questionId, response) => {
     setResponses({ ...responses, [questionId]: response });
+    // Clear other text if "Other" is deselected
+    if (response !== 'Other' && questionId === 'midB_q1') {
+      setOtherText('');
+    }
+  };
+
+  // Check if all questions are answered (with valid non-empty responses)
+  const allQuestionsAnswered = () => {
+    return questions.every(q => {
+      const response = responses[q.id];
+      // If "Other" is selected, also require the otherText to be filled
+      if (q.id === 'midB_q1' && response === 'Other') {
+        return response !== undefined && response !== null && response !== '' && otherText.trim() !== '';
+      }
+      return response !== undefined && response !== null && response !== '';
+    });
   };
 
   const handleSubmit = async () => {
-    if (Object.keys(responses).length !== questions.length) {
-      alert('Please answer all questions');
+    if (!allQuestionsAnswered()) {
+      const answeredCount = questions.filter(q => {
+        const response = responses[q.id];
+        return response !== undefined && response !== null && response !== '';
+      }).length;
+      alert(`Please answer all questions. You've answered ${answeredCount} of ${questions.length}`);
       return;
     }
 
@@ -195,6 +220,12 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
       await Promise.all(
         Object.entries(responses).map(([questionId, response]) => {
           const question = questions.find(q => q.id === questionId);
+          if (!question) {
+            console.error(`Question not found for ID: ${questionId}`);
+            console.error('Available questions:', questions.map(q => q.id));
+            console.error('Response keys:', Object.keys(responses));
+            return Promise.resolve(); // Skip invalid responses
+          }
           return axios.post(`${API_BASE_URL}/api/surveys/responses`, {
             survey_type: surveyInstance,
             question_id: questionId,
@@ -227,10 +258,15 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
             variant
           });
         } else {
+          // For Group B, if "Other" is selected, include the other text
+          let q1Value = responses['midB_q1'];
+          if (q1Value === 'Other' && otherText.trim()) {
+            q1Value = `Other: ${otherText.trim()}`;
+          }
           await axios.post(`${API_BASE_URL}/api/participant-records/mid-survey-b`, {
             participant_id: participantProlificId,
             conversation_index: convIndex,
-            q1: responses['midB_q1'],
+            q1: q1Value,
             q2: responses['midB_q2'],
             variant
           });
@@ -326,6 +362,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
         </div>
       );
     } else if (question.type === 'multiple_choice') {
+      const showOtherInput = question.id === 'midB_q1' && responses[question.id] === 'Other';
       return (
         <div className="multiple-choice-options">
           {question.options.map((option, idx) => (
@@ -340,6 +377,25 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
               <span>{option}</span>
             </label>
           ))}
+          {showOtherInput && (
+            <div className="other-input-container" style={{ marginTop: '12px', marginLeft: '24px' }}>
+              <input
+                type="text"
+                placeholder="Please specify..."
+                value={otherText}
+                onChange={(e) => setOtherText(e.target.value)}
+                className="other-text-input"
+                style={{
+                  width: '100%',
+                  maxWidth: '400px',
+                  padding: '8px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+              />
+            </div>
+          )}
         </div>
       );
     }
@@ -364,7 +420,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
         <button
           className="submit-button"
           onClick={handleSubmit}
-          disabled={submitting || Object.keys(responses).length !== questions.length}
+          disabled={submitting || !allQuestionsAnswered()}
         >
           {submitting ? 'Submitting...' : 'Continue'}
         </button>

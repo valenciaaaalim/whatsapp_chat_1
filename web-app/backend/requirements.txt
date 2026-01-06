@@ -17,3 +17,6 @@ python-json-logger==2.0.7
 # Security
 itsdangerous==2.1.2
 
+# Timezone support
+pytz==2024.1
+

@@ -20,18 +20,22 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
 
   useEffect(() => {
     // Initialize messages from conversation data
-    // Show only received messages initially (contact's messages)
+    // Show all messages with proper directions from the JSON
+    // Messages alternate: contact (RECEIVED) -> user (SENT) -> contact (RECEIVED) -> etc.
     const allMessages = conversation.conversation || [];
-    const initialMessages = allMessages
-      .filter(msg => msg.direction === 'RECEIVED')
-      .map((msg, idx) => ({
-        ...msg,
-        timestamp: new Date(Date.now() - (allMessages.length - idx) * 60000)
-      }));
+    
+    // Show all messages with their correct directions
+    // Pre-existing user messages (SENT) from JSON will be shown as green bubbles on right
+    // Contact messages (RECEIVED) will be shown as white bubbles on left
+    const initialMessages = allMessages.map((msg, idx) => ({
+      ...msg,
+      timestamp: new Date(Date.now() - (allMessages.length - idx) * 60000)
+    }));
+    
     setMessages(initialMessages);
     
-    // Set message index to track where we are in the conversation
-    setCurrentMessageIndex(initialMessages.length);
+    // Set message index to track where we are (all messages are already shown)
+    setCurrentMessageIndex(allMessages.length);
   }, [conversation]);
 
   const handleTyping = (text) => {
@@ -129,29 +133,15 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     setWarningState(null);
     setCurrentMessageIndex(currentMessageIndex + 1);
     
-    // Show next received message if available (simulate conversation flow)
-    // In a real scenario, we'd check if there are more messages in the conversation
+    // Since we're showing all messages from the start, 
+    // user typing new messages means they're continuing the conversation
+    // Check if we should show completion or allow more messages
     const allMessages = conversation.conversation || [];
-    const currentReceivedCount = messages.filter(m => m.direction === 'RECEIVED').length;
-    const totalReceivedMessages = allMessages.filter(m => m.direction === 'RECEIVED').length;
+    const userTypedMessages = messages.filter(m => m.id && m.id.startsWith('sent-')).length;
     
-    if (currentReceivedCount < totalReceivedMessages) {
-      // Find next received message
-      const nextReceived = allMessages
-        .slice(currentReceivedCount * 2) // Skip past pairs of sent/received
-        .find(msg => msg.direction === 'RECEIVED');
-      
-      if (nextReceived) {
-        setTimeout(() => {
-          const nextMessage = {
-            ...nextReceived,
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, nextMessage]);
-          setCurrentMessageIndex(prev => prev + 1);
-        }, 1000);
-      }
-    } else {
+    // If user has typed a few messages, consider conversation complete
+    // Or check if we've reached the end of the conversation flow
+    if (userTypedMessages > 0 || currentMessageIndex >= allMessages.length) {
       // Conversation complete - wait a bit then show survey
       setTimeout(() => {
         onComplete();
@@ -176,7 +166,10 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
   const getContactName = () => {
     const convData = conversation.conversation || [];
     const firstReceived = convData.find(m => m.direction === 'RECEIVED');
-    return firstReceived?.name || 'Contact';
+    const fullName = firstReceived?.name || 'Contact';
+    // Remove occupation description (everything after " - " or " | ")
+    const nameOnly = fullName.split(' - ')[0].split(' | ')[0].trim();
+    return nameOnly;
   };
   
   const contactName = getContactName();
