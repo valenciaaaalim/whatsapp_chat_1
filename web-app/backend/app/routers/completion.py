@@ -10,7 +10,7 @@ from app.schemas import CompletionRequest
 from app.config import settings
 from urllib.parse import urlencode
 from datetime import datetime
-from app.utils import get_singapore_time
+from app.utils import get_singapore_time, ensure_singapore_tz
 
 router = APIRouter(prefix="/api/completion", tags=["completion"])
 
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/completion", tags=["completion"])
 def get_prolific_completion_url(
     participant_id: int,
     completion_code: str = None,
+    prolific_id: str | None = None,
     db: Session = Depends(get_db)
 ):
     """Generate Prolific completion URL."""
@@ -26,20 +27,38 @@ def get_prolific_completion_url(
     if not participant:
         raise HTTPException(status_code=404, detail="Participant not found")
 
+    if participant.prolific_id is None and prolific_id:
+        participant.prolific_id = prolific_id
     if participant.completed_at is None:
-        participant.completed_at = get_singapore_time()
-        db.commit()
+        now_sgt = get_singapore_time()
+        participant.completed_at = now_sgt
+        participant.updated_at = now_sgt
+    db.commit()
 
     if participant.prolific_id:
         record = db.query(ParticipantRecord).filter(
             ParticipantRecord.prolific_id == participant.prolific_id
         ).first()
-        if record and record.completed_at is None:
-            record.completed_at = get_singapore_time()
-            if record.created_at and record.completed_at:
-                delta = record.completed_at - record.created_at
-                record.duration_of_study = delta.total_seconds()
+        if not record:
+            record = ParticipantRecord(
+                prolific_id=participant.prolific_id,
+                variant=participant.variant,
+                created_at=get_singapore_time()
+            )
+            db.add(record)
             db.commit()
+            db.refresh(record)
+        if record.completed_at is None:
+            record.completed_at = get_singapore_time()
+        if not record.created_at:
+            record.created_at = get_singapore_time()
+        if record.created_at and record.completed_at:
+            created_at = ensure_singapore_tz(record.created_at)
+            completed_at = ensure_singapore_tz(record.completed_at)
+            if created_at and completed_at:
+                delta = completed_at - created_at
+                record.duration_of_study = delta.total_seconds()
+        db.commit()
     
     # Build completion URL
     base_url = settings.PROLIFIC_COMPLETION_URL
@@ -61,6 +80,7 @@ def get_prolific_completion_url(
 def redirect_to_prolific(
     participant_id: int,
     completion_code: str = None,
+    prolific_id: str | None = None,
     db: Session = Depends(get_db)
 ):
     """Redirect user to Prolific completion page."""
@@ -68,20 +88,38 @@ def redirect_to_prolific(
     if not participant:
         raise HTTPException(status_code=404, detail="Participant not found")
 
+    if participant.prolific_id is None and prolific_id:
+        participant.prolific_id = prolific_id
     if participant.completed_at is None:
-        participant.completed_at = get_singapore_time()
+        now_sgt = get_singapore_time()
+        participant.completed_at = now_sgt
+        participant.updated_at = now_sgt
         db.commit()
 
     if participant.prolific_id:
         record = db.query(ParticipantRecord).filter(
             ParticipantRecord.prolific_id == participant.prolific_id
         ).first()
-        if record and record.completed_at is None:
-            record.completed_at = get_singapore_time()
-            if record.created_at and record.completed_at:
-                delta = record.completed_at - record.created_at
-                record.duration_of_study = delta.total_seconds()
+        if not record:
+            record = ParticipantRecord(
+                prolific_id=participant.prolific_id,
+                variant=participant.variant,
+                created_at=get_singapore_time()
+            )
+            db.add(record)
             db.commit()
+            db.refresh(record)
+        if record.completed_at is None:
+            record.completed_at = get_singapore_time()
+        if not record.created_at:
+            record.created_at = get_singapore_time()
+        if record.created_at and record.completed_at:
+            created_at = ensure_singapore_tz(record.created_at)
+            completed_at = ensure_singapore_tz(record.completed_at)
+            if created_at and completed_at:
+                delta = completed_at - created_at
+                record.duration_of_study = delta.total_seconds()
+        db.commit()
     
     # Build completion URL
     base_url = settings.PROLIFIC_COMPLETION_URL

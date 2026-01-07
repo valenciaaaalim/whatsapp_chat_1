@@ -9,6 +9,7 @@ import AlreadyCompletedScreen from './components/AlreadyCompletedScreen';
 import './App.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const PROLIFIC_STORAGE_KEY = 'whatsapp_prolific_id';
 
 // Component to handle conversation route with index parameter
 function ConversationRoute({ conversations, sessionIds, participantId, prolificId, variant, onComplete }) {
@@ -62,11 +63,28 @@ function App() {
     return `local_${Date.now()}_${randomPart}`;
   };
 
+  const resolveProlificId = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlProlificId = urlParams.get('PROLIFIC_PID');
+    if (urlProlificId) {
+      localStorage.setItem(PROLIFIC_STORAGE_KEY, urlProlificId);
+      return urlProlificId;
+    }
+
+    const storedId = localStorage.getItem(PROLIFIC_STORAGE_KEY);
+    if (storedId) {
+      return storedId;
+    }
+
+    const generatedId = generateLocalProlificId();
+    localStorage.setItem(PROLIFIC_STORAGE_KEY, generatedId);
+    return generatedId;
+  };
+
   const initializeParticipant = async () => {
     try {
       // Get prolific ID from URL params if present
-      const urlParams = new URLSearchParams(window.location.search);
-      const prolificId = urlParams.get('PROLIFIC_PID') || generateLocalProlificId();
+      const prolificId = resolveProlificId();
 
       const response = await axios.post(`${API_BASE_URL}/api/participants`, {
         prolific_id: prolificId
@@ -174,6 +192,7 @@ function App() {
             element={
               <CompletionScreen
                 participantId={participantId}
+                prolificId={prolificId}
               />
             } 
           />

@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Foreign
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.utils import get_singapore_time
 import json
 
 
@@ -16,8 +17,8 @@ class Participant(Base):
     prolific_id = Column(String, unique=True, index=True, nullable=True)
     variant = Column(String, nullable=False)  # 'A' or 'B'
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=get_singapore_time)
+    updated_at = Column(DateTime(timezone=True), default=get_singapore_time, onupdate=get_singapore_time)
     
     # Relationships
     conversations = relationship("ConversationSession", back_populates="participant", cascade="all, delete-orphan")
@@ -125,7 +126,7 @@ class ParticipantRecord(Base):
 
     prolific_id = Column(String, primary_key=True)
     variant = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=get_singapore_time)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     duration_of_study = Column(Float, nullable=True)
 

@@ -73,9 +73,12 @@ def create_participant(
     variant = assign_variant(db)
     
     # Create participant
+    now_sgt = get_singapore_time()
     participant = Participant(
         prolific_id=participant_data.prolific_id,
-        variant=variant
+        variant=variant,
+        created_at=now_sgt,
+        updated_at=now_sgt
     )
     db.add(participant)
     db.commit()

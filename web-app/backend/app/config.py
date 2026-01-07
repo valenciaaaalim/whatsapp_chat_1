@@ -21,6 +21,10 @@ class Settings:
         "http://localhost:3000",
         "https://localhost:3000",
     ]
+    ALLOWED_ORIGIN_REGEX: Optional[str] = os.getenv(
+        "ALLOWED_ORIGIN_REGEX",
+        r"http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?"
+    )
     
     # Gemini API
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")

@@ -4,7 +4,7 @@ import './CompletionScreen.css';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-function CompletionScreen({ participantId }) {
+function CompletionScreen({ participantId, prolificId }) {
   const [completionUrl, setCompletionUrl] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -15,7 +15,7 @@ function CompletionScreen({ participantId }) {
   const fetchCompletionUrl = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/completion/prolific`, {
-        params: { participant_id: participantId }
+        params: { participant_id: participantId, prolific_id: prolificId }
       });
       setCompletionUrl(response.data.completion_url);
     } catch (error) {
@@ -58,4 +58,3 @@ function CompletionScreen({ participantId }) {
 }
 
 export default CompletionScreen;
-
