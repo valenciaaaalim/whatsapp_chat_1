@@ -13,6 +13,37 @@
   padding: 4px 4px 4px 12px;
 }
 
+.textarea-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 36px;
+}
+
+.pii-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  font-size: 15px;
+  line-height: 20px;
+  padding: 8px 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  color: transparent;
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+.pii-underline {
+  border-bottom: 2px solid #ff0000;
+  background-color: rgba(255, 0, 0, 0.1);
+  color: transparent;
+}
+
 .message-input {
   flex: 1;
   border: none;
@@ -23,6 +54,11 @@
   max-height: 100px;
   padding: 8px 0;
   font-family: inherit;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .send-button {

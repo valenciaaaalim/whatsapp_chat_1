@@ -16,6 +16,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
   const [warningState, setWarningState] = useState(null);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [preClickText, setPreClickText] = useState('');
+  const [lastOfferedRewrite, setLastOfferedRewrite] = useState(null); // Track last offered rewrite for Group A
   const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -68,14 +69,20 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
       
       if (response.data.show_warning && 
           (response.data.risk_level === 'MEDIUM' || response.data.risk_level === 'HIGH')) {
+        const rewrite = response.data.safer_rewrite;
         setWarningState({
           riskLevel: response.data.risk_level,
           explanation: response.data.explanation,
-          saferRewrite: response.data.safer_rewrite,
+          saferRewrite: rewrite,
           primaryRiskFactors: response.data.primary_risk_factors
         });
+        // Track offered rewrite for Group A
+        if (variant === 'A' && rewrite) {
+          setLastOfferedRewrite(rewrite);
+        }
       } else {
         setWarningState(null);
+        setLastOfferedRewrite(null);
       }
     } catch (error) {
       console.error('Error assessing risk:', error);
@@ -86,15 +93,61 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     if (!draftText.trim()) return;
     
     const finalText = draftText.trim();
+    console.log('[Send] clicked', { variant, length: finalText.length });
+    
+    // For Group A: Get PII detection results and determine rewrite status
+    let finalRawText = null;
+    let finalMaskedText = null;
+    let finalRewriteText = null;
+    
+    if (variant === 'A') {
+      finalRawText = preClickText || draftText.trim(); // Use pre-click text if available, otherwise current draft
+      
+      // Get PII masked text
+      try {
+        const piiResponse = await axios.post(
+          `${API_BASE_URL}/pii/detect`,
+          { draft_text: finalRawText },
+          { timeout: 30000 }
+        );
+        finalMaskedText = piiResponse.data.masked_text || null;
+        console.log('[PII] detect for storage success', {
+          spans: piiResponse.data?.pii_spans?.length || 0
+        });
+      } catch (error) {
+        console.error('[PII] detect for storage error', error);
+      }
+      
+      // Determine rewrite status
+      if (lastOfferedRewrite) {
+        // Check if rewrite was accepted (finalText matches the rewrite)
+        if (finalText === lastOfferedRewrite.trim()) {
+          finalRewriteText = lastOfferedRewrite; // Rewrite was accepted
+        } else {
+          finalRewriteText = 'Rewrite'; // Rewrite was offered but ignored
+        }
+      }
+    }
     
     // Capture user input
     try {
-      await axios.post(`${API_BASE_URL}/api/participant-records/message`, {
+      const messagePayload = {
         participant_id: participantProlificId,
         conversation_index: conversationIndex,
         final_message: finalText,
         variant
-      });
+      };
+      
+      // Add Group A PII fields
+      if (variant === 'A') {
+        messagePayload.final_raw_text = finalRawText;
+        messagePayload.final_masked_text = finalMaskedText;
+        if (finalRewriteText) {
+          messagePayload.final_rewrite_text = finalRewriteText;
+        }
+      }
+      
+      await axios.post(`${API_BASE_URL}/api/participant-records/message`, messagePayload);
 
       if (warningState) {
         await axios.post(`${API_BASE_URL}/api/user-inputs/with-warning`, {
@@ -117,7 +170,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
         });
       }
     } catch (error) {
-      console.error('Error capturing user input:', error);
+      console.error('[Send] error capturing user input', error);
     }
     
     // Add message to list
@@ -131,6 +184,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     setMessages([...messages, newMessage]);
     setDraftText('');
     setWarningState(null);
+    setLastOfferedRewrite(null); // Reset rewrite tracking
     setCurrentMessageIndex(currentMessageIndex + 1);
     
     // Since we're showing all messages from the start, 
@@ -151,14 +205,16 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
   };
 
   const handleAcceptRewrite = () => {
-    if (warningState) {
+    if (warningState && warningState.saferRewrite) {
       setDraftText(warningState.saferRewrite);
+      // Keep lastOfferedRewrite so we can track that it was accepted on send
       setWarningState(null);
     }
   };
 
   const handleContinueAnyway = async () => {
     setWarningState(null);
+    // Keep lastOfferedRewrite so we can track that rewrite was offered but ignored
     // User continues with original text, which will be captured on send
   };
 
@@ -182,6 +238,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
         draftText={draftText}
         onTextChange={handleTyping}
         onSend={handleSend}
+        variant={variant}
       />
       {warningState && (
         <WarningModal

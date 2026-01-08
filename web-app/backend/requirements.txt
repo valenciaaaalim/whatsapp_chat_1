@@ -6,6 +6,13 @@ python-multipart==0.0.6
 
 # Database
 sqlalchemy==2.0.23
+gliner==0.2.22
+torch==2.9.0
+transformers==4.51.0
+
+# GLiNER dependencies
+nltk==3.8.1
+transformers>=4.38.2
 
 # Gemini API
 google-generativeai==0.3.2
@@ -19,4 +26,3 @@ itsdangerous==2.1.2
 
 # Timezone support
 pytz==2024.1
-

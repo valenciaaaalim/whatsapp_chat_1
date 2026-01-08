@@ -123,6 +123,10 @@ class ParticipantRecordMessage(BaseModel):
     conversation_index: int
     final_message: str
     variant: Optional[str] = None
+    # Group A only: PII analysis fields
+    final_raw_text: Optional[str] = None  # The draft text before sending (maps to final_raw_*)
+    final_masked_text: Optional[str] = None  # PII-masked version
+    final_rewrite_text: Optional[str] = None  # Rewrite if offered/accepted, or 'Rewrite' placeholder
 
 
 class ParticipantRecordPreSurvey(BaseModel):

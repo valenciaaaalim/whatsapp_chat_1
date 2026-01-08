@@ -4,6 +4,7 @@ Based on the gliner_chunking.ipynb notebook logic.
 """
 
 import logging
+import os
 from typing import List, Optional
 from dataclasses import dataclass
 from gliner import GLiNER
@@ -90,9 +91,9 @@ class GliNERService:
         "vehicle id"
     ]
     
-    def __init__(self, model_name: str = "knowledgator/gliner-pii-base-v1.0"):
+    def __init__(self, model_name: str | None = None):
         """Initialize GLiNER model and tokenizer."""
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("GLINER_MODEL_NAME", "knowledgator/gliner-pii-base-v1.0")
         self.model: Optional[GLiNER] = None
         self.tokenizer: Optional[AutoTokenizer] = None
         self.labels = (
@@ -119,7 +120,10 @@ class GliNERService:
         
         try:
             logger.info(f"Loading GLiNER model: {self.model_name}")
-            self.model = GLiNER.from_pretrained(self.model_name)
+            try:
+                self.model = GLiNER.from_pretrained(self.model_name, strict=False)
+            except TypeError:
+                self.model = GLiNER.from_pretrained(self.model_name)
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self._ensure_nltk_data()
             self._initialized = True
@@ -149,6 +153,7 @@ class GliNERService:
         """
         if not self.is_loaded():
             self.initialize()
+        logger.info("GLiNER masking start (len=%s)", len(text))
         
         # Step 1: Detect PII entities
         entities = self.model.predict_entities(text, self.labels)
@@ -223,4 +228,3 @@ class GliNERService:
         self.tokenizer = None
         self._initialized = False
         logger.info("GLiNER service cleaned up")
-

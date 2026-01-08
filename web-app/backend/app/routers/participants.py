@@ -72,7 +72,7 @@ def create_participant(
     # Assign variant
     variant = assign_variant(db)
     
-    # Create participant
+    # Create participant (handle race with unique prolific_id)
     now_sgt = get_singapore_time()
     participant = Participant(
         prolific_id=participant_data.prolific_id,
@@ -81,7 +81,24 @@ def create_participant(
         updated_at=now_sgt
     )
     db.add(participant)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        existing = db.query(Participant).filter(
+            Participant.prolific_id == participant_data.prolific_id
+        ).first()
+        if existing:
+            status = "completed" if existing.completed_at else "existing"
+            completion_url = build_completion_url(existing.prolific_id) if existing.completed_at else None
+            return ParticipantCreateResponse(
+                id=existing.id,
+                prolific_id=existing.prolific_id,
+                variant=existing.variant,
+                status=status,
+                completion_url=completion_url
+            )
+        raise
     db.refresh(participant)
     
     # Create corresponding participant_record entry (empty record, will be filled as they progress)

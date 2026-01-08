@@ -6,10 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import logging
+import threading
 import time
 
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, migrate_participant_records_columns, reorder_participant_records_columns
 from app.middleware.security import SecurityHeadersMiddleware
 from app.routers import (
     participants,
@@ -18,7 +19,8 @@ from app.routers import (
     user_inputs,
     surveys,
     completion,
-    participant_records
+    participant_records,
+    pii
 )
 
 # Configure logging
@@ -54,6 +56,7 @@ app.include_router(user_inputs.router)
 app.include_router(surveys.router)
 app.include_router(completion.router)
 app.include_router(participant_records.router)
+app.include_router(pii.router)
 
 
 @app.on_event("startup")
@@ -63,6 +66,17 @@ async def startup_event():
     try:
         init_db()
         logger.info("Database initialized")
+        migrate_participant_records_columns()
+        logger.info("Database migration completed")
+        reorder_participant_records_columns()
+        logger.info("Database reorder migration completed")
+        def warm_pii_model():
+            try:
+                pii.get_gliner_service()
+                logger.info("GLiNER model warmup completed")
+            except Exception as e:
+                logger.error(f"GLiNER warmup failed: {e}")
+        threading.Thread(target=warm_pii_model, daemon=True).start()
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise

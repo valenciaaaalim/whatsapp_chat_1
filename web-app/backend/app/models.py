@@ -137,12 +137,21 @@ class ParticipantRecord(Base):
     pre_4 = Column(Text, nullable=True)
 
     # Conversation data
-    input_1 = Column(Text, nullable=True)
+    # Map final_raw_* to existing input_* DB columns (no physical rename)
+    final_raw_1 = Column('input_1', Text, nullable=True)
     msg_1 = Column(Text, nullable=True)
-    input_2 = Column(Text, nullable=True)
+    final_raw_2 = Column('input_2', Text, nullable=True)
     msg_2 = Column(Text, nullable=True)
-    input_3 = Column(Text, nullable=True)
+    final_raw_3 = Column('input_3', Text, nullable=True)
     msg_3 = Column(Text, nullable=True)
+    
+    # New columns for PII analysis (Group A only)
+    final_masked_1 = Column(Text, nullable=True)
+    final_rewrite_1 = Column(Text, nullable=True)
+    final_masked_2 = Column(Text, nullable=True)
+    final_rewrite_2 = Column(Text, nullable=True)
+    final_masked_3 = Column(Text, nullable=True)
+    final_rewrite_3 = Column(Text, nullable=True)
 
     # Variant A mid-survey (3 questions × 3 conversations)
     # Conversation 1

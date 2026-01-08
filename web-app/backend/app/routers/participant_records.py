@@ -47,7 +47,21 @@ def record_final_message(
 
     record = get_or_create_record(db, payload.participant_id, payload.variant)
     slot = payload.conversation_index + 1
+    
+    # Store the final sent message (unchanged)
     setattr(record, f"msg_{slot}", payload.final_message)
+    
+    # Store final_raw_* (maps to input_* DB columns) - Group A only
+    if payload.variant == 'A' and payload.final_raw_text is not None:
+        setattr(record, f"final_raw_{slot}", payload.final_raw_text)
+    
+    # Store final_masked_* and final_rewrite_* - Group A only
+    if payload.variant == 'A':
+        if payload.final_masked_text is not None:
+            setattr(record, f"final_masked_{slot}", payload.final_masked_text)
+        if payload.final_rewrite_text is not None:
+            setattr(record, f"final_rewrite_{slot}", payload.final_rewrite_text)
+    
     db.commit()
 
     return {"status": "saved"}

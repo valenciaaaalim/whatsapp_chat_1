@@ -48,6 +48,7 @@ function App() {
   const [sessionIds, setSessionIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const [piiReady, setPiiReady] = useState(true);
 
   useEffect(() => {
     // Initialize participant only once
@@ -57,6 +58,14 @@ function App() {
       setInitialized(true);
     }
   }, [initialized]);
+
+  useEffect(() => {
+    if (variant === 'A') {
+      checkPiiStatus();
+      const interval = setInterval(checkPiiStatus, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [variant]);
 
   const generateLocalProlificId = () => {
     const randomPart = Math.random().toString(36).slice(2, 8);
@@ -111,6 +120,20 @@ function App() {
     }
   };
 
+  const checkPiiStatus = async () => {
+    if (variant !== 'A') {
+      setPiiReady(true);
+      return;
+    }
+    try {
+      const response = await axios.get(`${API_BASE_URL}/pii/status`);
+      setPiiReady(Boolean(response.data?.loaded));
+    } catch (error) {
+      console.error('Error checking PII status:', error);
+      setPiiReady(false);
+    }
+  };
+
   // Create sessions when participantId and conversations are available
   useEffect(() => {
     const createSessions = async () => {
@@ -149,6 +172,10 @@ function App() {
 
   if (!participantId) {
     return <div className="error">Error initializing participant</div>;
+  }
+
+  if (variant === 'A' && !piiReady) {
+    return <div className="loading">Loading PII model...</div>;
   }
 
   return (
