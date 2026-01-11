@@ -52,7 +52,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     if (text.trim()) {
       typingTimeoutRef.current = setTimeout(() => {
         assessRisk(text);
-      }, 1500);
+      }, 1000);
     } else {
       setWarningState(null);
     }

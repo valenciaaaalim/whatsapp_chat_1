@@ -29,7 +29,16 @@ ENV PYTHONPATH=/app
 ENV GLINER_MODEL_NAME=knowledgator/gliner-pii-base-v1.0
 
 # Pre-download GLiNER model and tokenizer so first request doesn't block
-RUN python - <<'PY'\nimport os\nfrom gliner import GLiNER\nfrom transformers import AutoTokenizer\nmodel_name = os.environ.get(\"GLINER_MODEL_NAME\", \"knowledgator/gliner-pii-base-v1.0\")\nGLiNER.from_pretrained(model_name)\nAutoTokenizer.from_pretrained(model_name)\nprint(\"Pre-downloaded GLiNER model:\", model_name)\nPY
+RUN python - <<'PY'
+import os
+from gliner import GLiNER
+from transformers import AutoTokenizer
+
+model_name = os.environ.get("GLINER_MODEL_NAME", "knowledgator/gliner-pii-base-v1.0")
+GLiNER.from_pretrained(model_name)
+AutoTokenizer.from_pretrained(model_name)
+print("Pre-downloaded GLiNER model:", model_name)
+PY
 
 # Expose port
 EXPOSE 8000

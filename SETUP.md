@@ -101,58 +101,10 @@ access via http://localhost:3000
 
 ## Run with Docker
 ```
-conda activate ner
-cd web-app
-
-docker-compose down
-rm backend/data/web_app.db
-
-# (Optional) Remove old Docker images to force rebuild
-docker-compose build --no-cache
-
-# Start all services (backend, frontend, xml-extractor)
-docker-compose up -d
-
-# Wait for services to be healthy (about 30-40 seconds)
-# Check status
-docker-compose ps
-
-# in another terminal
-cd web-app
-docker-compose exec web-app-backend python seed_data.py
-```
-
 docker-compose down
 rm backend/data/web_app.db
 docker-compose build --no-cache
 docker-compose up -d
 docker-compose exec web-app-backend python seed_data.py
-
-
 ```
-# Reset everything
-docker-compose down && rm backend/data/web_app.db && docker-compose up -d && sleep 15 && docker-compose exec web-app-backend python seed_data.py
-
-# View logs
-docker-compose logs -f web-app-backend
-docker-compose logs -f web-app-frontend
-
-# Restart a service
-docker-compose restart web-app-backend
-
-# Rebuild after code changes
-docker-compose build web-app-backend
-docker-compose up -d web-app-backend
-docker-compose build --no-cache #Rebuilds all services without using cache
-docker-compose build --no-cache web-app-frontend #Rebuilds only frontend
-docker-compose build --no-cache web-app-backend #Rebuilds only backend
-docker-compose down --rmi all #Removes containers and images (more aggressive)
-
-# Access database
-sqlite3 backend/data/web_app.db
-
-# Export database
-sqlite3 backend/data/web_app.db .dump > backup.sql
-```
-
 

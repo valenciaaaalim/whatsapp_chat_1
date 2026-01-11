@@ -69,7 +69,7 @@ function ChatComposer({ draftText, onTextChange, onSend, variant }) {
           setMaskedText('');
         }
       });
-    }, 1500);
+    }, 1000);
 
     return () => {
       if (debounceTimeoutRef.current) {

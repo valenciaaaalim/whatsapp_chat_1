@@ -57,7 +57,7 @@
   "system_behavior": {
     "interaction_trigger": {
       "type": "Typing pause interception",
-      "debounce_ms": 1500,
+      "debounce_ms": 1000,
       "description": "When user stops typing for ~1.5s, run PII masking + chunking before LLM."
     },
     "mandatory_preprocessing_before_llm": {
