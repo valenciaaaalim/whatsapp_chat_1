@@ -1,7 +1,8 @@
 """
 Risk assessment routes.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 import logging
 import sys
 import os
@@ -10,6 +11,17 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal, require_db
+from app.models import (
+    LLMOutput,
+    Participant,
+    ParticipantLLMUsage,
+    ParticipantScenarioLLMUsage,
+    ScenarioResponse,
+)
 from app.services.gemini_service import GeminiService
 from app.services.risk_assessment import RiskAssessmentService
 from app.config import settings
@@ -113,6 +125,175 @@ class _SingleFlightCoordinator:
 
 
 _single_flight = _SingleFlightCoordinator()
+
+
+def _open_db_session() -> Session:
+    """Create a DB session bound to the configured engine."""
+    return SessionLocal(bind=require_db())
+
+
+def _resolve_participant_id(db: Session, payload: Dict[str, Any]) -> int:
+    """Resolve participant id from request payload."""
+    raw_participant_id = payload.get("participant_id")
+    if raw_participant_id is not None:
+        try:
+            participant_id = int(raw_participant_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid participant_id")
+
+        participant = db.query(Participant.id).filter(Participant.id == participant_id).first()
+        if participant is None:
+            raise HTTPException(status_code=404, detail="Participant not found")
+        return participant_id
+
+    prolific_id = payload.get("participant_prolific_id") or payload.get("prolific_id")
+    if not prolific_id:
+        raise HTTPException(
+            status_code=400,
+            detail="participant_id or participant_prolific_id is required for LLM usage tracking",
+        )
+
+    participant = db.query(Participant.id).filter(Participant.prolific_id == str(prolific_id)).first()
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    return int(participant[0])
+
+
+def _resolve_scenario_id(payload: Dict[str, Any]) -> int:
+    """Resolve scenario id from request payload."""
+    raw_session_id = payload.get("session_id", 1)
+    try:
+        scenario_id = int(raw_session_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    if scenario_id < 1:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    return scenario_id
+
+
+def consume_llm_budget(
+    db: Session,
+    participant_id: int,
+    scenario_id: int,
+    total_limit: int = 30,
+    scenario_limit: int = 10,
+) -> Dict[str, Any]:
+    """Atomically consume both total and per-scenario LLM budgets."""
+    total_stmt = (
+        insert(ParticipantLLMUsage)
+        .values(participant_id=participant_id, total_calls=1)
+        .on_conflict_do_update(
+            index_elements=[ParticipantLLMUsage.participant_id],
+            set_={"total_calls": ParticipantLLMUsage.total_calls + 1},
+            where=ParticipantLLMUsage.total_calls < total_limit,
+        )
+        .returning(ParticipantLLMUsage.total_calls)
+    )
+
+    scenario_stmt = (
+        insert(ParticipantScenarioLLMUsage)
+        .values(participant_id=participant_id, scenario_id=scenario_id, calls=1)
+        .on_conflict_do_update(
+            index_elements=[ParticipantScenarioLLMUsage.participant_id, ParticipantScenarioLLMUsage.scenario_id],
+            set_={"calls": ParticipantScenarioLLMUsage.calls + 1},
+            where=ParticipantScenarioLLMUsage.calls < scenario_limit,
+        )
+        .returning(ParticipantScenarioLLMUsage.calls)
+    )
+
+    try:
+        total_calls = db.execute(total_stmt).scalar_one_or_none()
+        if total_calls is None:
+            db.rollback()
+            return {
+                "allowed": False,
+                "cap_type": "total",
+                "limit": total_limit,
+                "total_calls": total_limit,
+                "scenario_calls": None,
+            }
+
+        scenario_calls = db.execute(scenario_stmt).scalar_one_or_none()
+        if scenario_calls is None:
+            db.rollback()
+            return {
+                "allowed": False,
+                "cap_type": "scenario",
+                "limit": scenario_limit,
+                "total_calls": None,
+                "scenario_calls": scenario_limit,
+            }
+
+        db.commit()
+        return {
+            "allowed": True,
+            "cap_type": None,
+            "limit": None,
+            "total_calls": int(total_calls),
+            "scenario_calls": int(scenario_calls),
+        }
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _get_latest_successful_output(
+    db: Session,
+    participant_id: int,
+    scenario_id: int,
+) -> Optional[LLMOutput]:
+    """Return the latest successful LLM output for participant/scenario."""
+    return (
+        db.query(LLMOutput)
+        .filter(
+            LLMOutput.participant_id == participant_id,
+            LLMOutput.scenario_id == scenario_id,
+            LLMOutput.llm_used.is_(True),
+        )
+        .order_by(LLMOutput.created_at.desc(), LLMOutput.id.desc())
+        .first()
+    )
+
+
+def _is_scenario_submitted(
+    db: Session,
+    participant_id: int,
+    scenario_id: int,
+) -> bool:
+    """Return whether a scenario already has a submitted final message."""
+    row = (
+        db.query(ScenarioResponse.id)
+        .filter(
+            ScenarioResponse.participant_id == participant_id,
+            ScenarioResponse.scenario_number == scenario_id,
+            ScenarioResponse.final_message.is_not(None),
+            ScenarioResponse.final_message != "",
+        )
+        .first()
+    )
+    return row is not None
+
+
+def _persist_llm_output(
+    db: Session,
+    participant_id: int,
+    scenario_id: int,
+    llm_used: bool,
+    cap_reached: bool,
+    response_json: Optional[Dict[str, Any]],
+    error_text: Optional[str] = None,
+) -> None:
+    """Persist LLM output/cap event row."""
+    row = LLMOutput(
+        participant_id=participant_id,
+        scenario_id=scenario_id,
+        llm_used=llm_used,
+        cap_reached=cap_reached,
+        response_json=response_json,
+        error_text=error_text,
+    )
+    db.add(row)
+    db.commit()
 
 
 def get_gliner_service() -> GliNERService:
@@ -292,12 +473,17 @@ def reload_conversations():
 
 
 def _single_flight_key(payload: Dict[str, Any]) -> str:
-    participant = str(payload.get("participant_prolific_id") or "anonymous")
+    participant = str(
+        payload.get("participant_id")
+        or payload.get("participant_prolific_id")
+        or payload.get("prolific_id")
+        or "anonymous"
+    )
     session_id = payload.get("session_id", 1)
     return f"{participant}:{session_id}"
 
 
-def _process_risk_assessment_payload(request: Dict[str, Any]) -> Dict[str, Any]:
+def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
     """Assess risk payload. Used by single-flight worker."""
     draft_text = request.get("draft_text", "")
     masked_text_input = request.get("masked_text")
@@ -306,6 +492,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Dict[str, Any]:
     participant_prolific_id = request.get("participant_prolific_id")
     live_typing = bool(request.get("live_typing"))
     risk_service = _build_risk_service(live_typing=live_typing)
+    scenario_id = _resolve_scenario_id(request)
     
     logger.info(
         "[RISK] Processing assessment (session_id=%s, draft_len=%d, live_typing=%s)",
@@ -364,6 +551,103 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
 
+    participant_id: Optional[int] = None
+    budget_result: Dict[str, Any]
+    db = _open_db_session()
+    try:
+        participant_id = _resolve_participant_id(db, request)
+        if _is_scenario_submitted(db, participant_id=participant_id, scenario_id=scenario_id):
+            budget_result = {
+                "allowed": False,
+                "cap_type": "scenario",
+                "limit": 10,
+                "total_calls": None,
+                "scenario_calls": None,
+            }
+            logger.info(
+                "[LLM_CAP] participant_id=%s scenario_id=%s scenario already submitted; reusing final LLM output",
+                participant_id,
+                scenario_id,
+            )
+        else:
+            budget_result = consume_llm_budget(
+                db,
+                participant_id=participant_id,
+                scenario_id=scenario_id,
+                total_limit=30,
+                scenario_limit=10,
+            )
+        if not budget_result["allowed"]:
+            cap_type = budget_result["cap_type"]
+            limit = int(budget_result["limit"])
+            latest_output = _get_latest_successful_output(
+                db,
+                participant_id=participant_id,
+                scenario_id=scenario_id,
+            )
+
+            if latest_output and isinstance(latest_output.response_json, dict):
+                capped_response = dict(latest_output.response_json)
+                capped_response["cap_reached"] = True
+                _persist_llm_output(
+                    db,
+                    participant_id=participant_id,
+                    scenario_id=scenario_id,
+                    llm_used=False,
+                    cap_reached=True,
+                    response_json=capped_response,
+                    error_text="cap reached",
+                )
+                logger.info(
+                    "[LLM_CAP] participant_id=%s scenario_id=%s llm_used=%s cap_reached=%s cap_type=%s limit=%s",
+                    participant_id,
+                    scenario_id,
+                    False,
+                    True,
+                    cap_type,
+                    limit,
+                )
+                return capped_response
+
+            _persist_llm_output(
+                db,
+                participant_id=participant_id,
+                scenario_id=scenario_id,
+                llm_used=False,
+                cap_reached=True,
+                response_json=None,
+                error_text="cap reached, no previous",
+            )
+            logger.info(
+                "[LLM_CAP] participant_id=%s scenario_id=%s llm_used=%s cap_reached=%s cap_type=%s limit=%s",
+                participant_id,
+                scenario_id,
+                False,
+                True,
+                cap_type,
+                limit,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "LLM cap reached",
+                    "cap_type": cap_type,
+                    "limit": limit,
+                },
+            )
+
+        logger.info(
+            "[LLM_CAP] participant_id=%s scenario_id=%s llm_used=%s cap_reached=%s total_calls=%s scenario_calls=%s",
+            participant_id,
+            scenario_id,
+            True,
+            False,
+            budget_result["total_calls"],
+            budget_result["scenario_calls"],
+        )
+    finally:
+        db.close()
+
     # Get conversation history from annotated_test.json using conversation_id.
     # Frontend can also provide masked_history to avoid remasking history repeatedly.
     conversation_history = get_conversation_history_from_json(conversation_id)
@@ -387,8 +671,8 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info("[RISK] LLM result: risk_level=%s, has_rewrite=%s, rewrite_len=%d", 
                 result["risk_level"], bool(result["safer_rewrite"]), len(result["safer_rewrite"]) if result["safer_rewrite"] else 0)
-    
-    return {
+
+    response_payload = {
         "risk_level": result["risk_level"],
         "safer_rewrite": result["safer_rewrite"],
         "show_warning": result["show_warning"],
@@ -397,6 +681,29 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Dict[str, Any]:
         "output_1": result.get("output_1", {}),
         "output_2": result.get("output_2", {})
     }
+
+    if participant_id is not None:
+        log_db = _open_db_session()
+        try:
+            _persist_llm_output(
+                log_db,
+                participant_id=participant_id,
+                scenario_id=scenario_id,
+                llm_used=True,
+                cap_reached=False,
+                response_json=response_payload,
+            )
+            logger.info(
+                "[LLM_OUTPUT] participant_id=%s scenario_id=%s llm_used=%s cap_reached=%s",
+                participant_id,
+                scenario_id,
+                True,
+                False,
+            )
+        finally:
+            log_db.close()
+
+    return response_payload
 
 
 @router.post("/risk/assess")

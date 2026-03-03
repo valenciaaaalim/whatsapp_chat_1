@@ -3,6 +3,7 @@ Database models for the web app.
 Normalized schema with 7 tables for user study data.
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, UniqueConstraint, Enum as SQLEnum, Numeric
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -214,3 +215,47 @@ class EndOfStudySurvey(Base):
     
     # Relationships
     participant = relationship("Participant", back_populates="end_of_study_survey")
+
+
+# =============================================================================
+# TABLE 8: participant_llm_usage - Per-participant total Gemini calls
+# =============================================================================
+class ParticipantLLMUsage(Base):
+    """Total LLM usage per participant."""
+    __tablename__ = "participant_llm_usage"
+
+    participant_id = Column(Integer, ForeignKey("participants.id", ondelete="CASCADE"), primary_key=True)
+    total_calls = Column(Integer, nullable=False, default=0)
+
+
+# =============================================================================
+# TABLE 9: participant_scenario_llm_usage - Per-scenario Gemini calls
+# =============================================================================
+class ParticipantScenarioLLMUsage(Base):
+    """LLM usage per participant and scenario."""
+    __tablename__ = "participant_scenario_llm_usage"
+    __table_args__ = (
+        UniqueConstraint("participant_id", "scenario_id", name="uq_participant_scenario_llm_usage"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    participant_id = Column(Integer, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False)
+    scenario_id = Column(Integer, nullable=False)
+    calls = Column(Integer, nullable=False, default=0)
+
+
+# =============================================================================
+# TABLE 10: llm_outputs - Stored LLM responses and cap events
+# =============================================================================
+class LLMOutput(Base):
+    """Persisted LLM outputs and cap decisions per participant/scenario."""
+    __tablename__ = "llm_outputs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    participant_id = Column(Integer, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False, index=True)
+    scenario_id = Column(Integer, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    llm_used = Column(Boolean, nullable=False, default=False)
+    cap_reached = Column(Boolean, nullable=False, default=False)
+    response_json = Column(JSONB, nullable=True)
+    error_text = Column(Text, nullable=True)
