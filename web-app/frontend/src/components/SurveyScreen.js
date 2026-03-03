@@ -255,15 +255,6 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   const [otherText, setOtherText] = useState(''); // For "Other" option text input
   const surveyContentRef = useRef(null);
   const questionRefs = useRef({});
-  const surveyInstance =
-    (surveyType === 'mid' || surveyType === 'post-scenario') && conversationIndex !== null
-      ? `post_scenario_${conversationIndex}`
-      : surveyType === 'baseline' || surveyType === 'pre'
-      ? 'baseline'
-      : surveyType === 'post' || surveyType === 'end-of-study'
-      ? 'end_of_study'
-      : surveyType;
-
   // Reset otherText when survey type or conversation index changes
   useEffect(() => {
     setOtherText('');
@@ -308,22 +299,23 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
       await requestFn();
       return { ok: true };
     } catch (error) {
-      if (!error?.response) {
+      let finalError = error;
+      if (!finalError?.response) {
         const recovered = await waitForBackend();
         if (recovered) {
           try {
             await requestFn();
             return { ok: true, retried: true };
           } catch (retryError) {
-            error = retryError;
+            finalError = retryError;
           }
         }
       }
-      if (error?.response?.status === 409) {
-        console.warn(`[Survey] ${label} already submitted`, error.response?.data?.detail);
+      if (finalError?.response?.status === 409) {
+        console.warn(`[Survey] ${label} already submitted`, finalError.response?.data?.detail);
         return { ok: true, conflict: true };
       }
-      throw error;
+      throw finalError;
     }
   };
 
