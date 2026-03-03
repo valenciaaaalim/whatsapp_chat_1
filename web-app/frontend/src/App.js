@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import WelcomeScreen from './components/WelcomeScreen';
@@ -34,6 +34,49 @@ const SEED_CONVERSATIONS = [
     ground_truth: {}
   }
 ];
+
+const generateLocalProlificId = () => {
+  const randomPart = Math.random().toString(36).slice(2, 8);
+  return `local_${Date.now()}_${randomPart}`;
+};
+
+const shouldTagVariantInPid = (pid) => /^(local|test)_/i.test(pid || '');
+
+const normalizeProlificId = (pid) => {
+  const cleaned = (pid || '').trim();
+  if (!cleaned) return '';
+  if (!shouldTagVariantInPid(cleaned)) return cleaned;
+  return cleaned.replace(/_([AB])$/i, '');
+};
+
+const withVariantSuffix = (pid, assignedVariant) => {
+  const base = normalizeProlificId(pid);
+  if (!base || !assignedVariant) return base;
+  return `${base}_${assignedVariant}`;
+};
+
+const resolveProlificId = () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlProlificId = urlParams.get('PROLIFIC_PID');
+  if (urlProlificId) {
+    const canonicalId = normalizeProlificId(urlProlificId);
+    localStorage.setItem(PROLIFIC_STORAGE_KEY, canonicalId);
+    return canonicalId;
+  }
+
+  const storedId = localStorage.getItem(PROLIFIC_STORAGE_KEY);
+  if (storedId) {
+    const canonicalId = normalizeProlificId(storedId);
+    if (canonicalId !== storedId) {
+      localStorage.setItem(PROLIFIC_STORAGE_KEY, canonicalId);
+    }
+    return canonicalId;
+  }
+
+  const generatedId = generateLocalProlificId();
+  localStorage.setItem(PROLIFIC_STORAGE_KEY, generatedId);
+  return generatedId;
+};
 
 // Component to handle conversation route with index parameter
 function ConversationRoute({ conversations, participantId, prolificId, variant, onComplete }) {
@@ -74,75 +117,7 @@ function App() {
   const [initialized, setInitialized] = useState(false);
   const [piiReady, setPiiReady] = useState(true);
 
-  useEffect(() => {
-    if (isAdminRoute) {
-      setLoading(false);
-      return;
-    }
-    // Initialize participant only once
-    if (!initialized) {
-      initializeParticipant();
-      loadConversations();
-      setInitialized(true);
-    }
-  }, [initialized, isAdminRoute]);
-
-  useEffect(() => {
-    if (isAdminRoute) {
-      return undefined;
-    }
-    if (variant === 'A') {
-      checkPiiStatus();
-      const interval = setInterval(checkPiiStatus, 3000);
-      return () => clearInterval(interval);
-    }
-    return undefined;
-  }, [variant, isAdminRoute]);
-
-  const generateLocalProlificId = () => {
-    const randomPart = Math.random().toString(36).slice(2, 8);
-    return `local_${Date.now()}_${randomPart}`;
-  };
-
-  const shouldTagVariantInPid = (pid) => /^(local|test)_/i.test(pid || '');
-
-  const normalizeProlificId = (pid) => {
-    const cleaned = (pid || '').trim();
-    if (!cleaned) return '';
-    if (!shouldTagVariantInPid(cleaned)) return cleaned;
-    return cleaned.replace(/_([AB])$/i, '');
-  };
-
-  const withVariantSuffix = (pid, assignedVariant) => {
-    const base = normalizeProlificId(pid);
-    if (!base || !assignedVariant) return base;
-    return `${base}_${assignedVariant}`;
-  };
-
-  const resolveProlificId = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlProlificId = urlParams.get('PROLIFIC_PID');
-    if (urlProlificId) {
-      const canonicalId = normalizeProlificId(urlProlificId);
-      localStorage.setItem(PROLIFIC_STORAGE_KEY, canonicalId);
-      return canonicalId;
-    }
-
-    const storedId = localStorage.getItem(PROLIFIC_STORAGE_KEY);
-    if (storedId) {
-      const canonicalId = normalizeProlificId(storedId);
-      if (canonicalId !== storedId) {
-        localStorage.setItem(PROLIFIC_STORAGE_KEY, canonicalId);
-      }
-      return canonicalId;
-    }
-
-    const generatedId = generateLocalProlificId();
-    localStorage.setItem(PROLIFIC_STORAGE_KEY, generatedId);
-    return generatedId;
-  };
-
-  const initializeParticipant = async () => {
+  const initializeParticipant = useCallback(async () => {
     try {
       // Get prolific ID from URL params if present
       const prolificId = resolveProlificId();
@@ -172,9 +147,9 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     try {
       // Try to load from backend first
       const response = await axios.get(`${API_BASE_URL}/api/conversations/seed`);
@@ -184,9 +159,9 @@ function App() {
       // Fall back to seed data (in a real app, this would come from the backend)
       setConversations(SEED_CONVERSATIONS);
     }
-  };
+  }, []);
 
-  const checkPiiStatus = async () => {
+  const checkPiiStatus = useCallback(async () => {
     if (variant !== 'A') {
       setPiiReady(true);
       return;
@@ -198,7 +173,32 @@ function App() {
       console.error('Error checking PII status:', error);
       setPiiReady(false);
     }
-  };
+  }, [variant]);
+
+  useEffect(() => {
+    if (isAdminRoute) {
+      setLoading(false);
+      return;
+    }
+    // Initialize participant only once
+    if (!initialized) {
+      initializeParticipant();
+      loadConversations();
+      setInitialized(true);
+    }
+  }, [initialized, isAdminRoute, initializeParticipant, loadConversations]);
+
+  useEffect(() => {
+    if (isAdminRoute) {
+      return undefined;
+    }
+    if (variant === 'A') {
+      checkPiiStatus();
+      const interval = setInterval(checkPiiStatus, 3000);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [variant, isAdminRoute, checkPiiStatus]);
 
   const handleConversationComplete = () => {
     if (currentConversationIndex < conversations.length - 1) {

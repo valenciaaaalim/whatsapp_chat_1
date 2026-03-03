@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import './CompletionScreen.css';
 
@@ -8,11 +8,7 @@ function CompletionScreen({ participantId, prolificId }) {
   const [completionUrl, setCompletionUrl] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchCompletionUrl();
-  }, [participantId]);
-
-  const fetchCompletionUrl = async () => {
+  const fetchCompletionUrl = useCallback(async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/completion/prolific`, {
         params: { participant_id: participantId, prolific_id: prolificId }
@@ -23,7 +19,11 @@ function CompletionScreen({ participantId, prolificId }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [participantId, prolificId]);
+
+  useEffect(() => {
+    fetchCompletionUrl();
+  }, [fetchCompletionUrl]);
 
   const handleRedirect = () => {
     if (completionUrl) {

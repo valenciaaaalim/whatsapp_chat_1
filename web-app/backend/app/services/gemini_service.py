@@ -36,7 +36,7 @@ class GeminiService:
         self.model = settings.GEMINI_MODEL
         self.timeout = int(timeout_seconds if timeout_seconds is not None else settings.GEMINI_TIMEOUT_SECONDS)
         self.max_attempts = max(1, int(max_attempts if max_attempts is not None else settings.GEMINI_MAX_ATTEMPTS))
-        self.thinking_level = settings.GEMINI_THINKING_LEVEL
+        self.thinking_budget = int(settings.GEMINI_THINKING_BUDGET)
         self.include_thoughts = settings.GEMINI_INCLUDE_THOUGHTS
         self.base_url = "https://generativelanguage.googleapis.com"
         self.api_version = "v1beta"
@@ -71,7 +71,7 @@ class GeminiService:
             ],
             "generationConfig": {
                 "thinkingConfig": {
-                    "thinkingLevel": self.thinking_level,
+                    "thinkingBudget": self.thinking_budget,
                     "includeThoughts": self.include_thoughts,
                 }
             },

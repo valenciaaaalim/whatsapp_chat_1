@@ -56,7 +56,7 @@ class Settings:
     GEMINI_MAX_ATTEMPTS: int = int(os.getenv("GEMINI_MAX_ATTEMPTS", "2"))
     GEMINI_LIVE_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_LIVE_TIMEOUT_SECONDS", "20"))
     GEMINI_LIVE_MAX_ATTEMPTS: int = int(os.getenv("GEMINI_LIVE_MAX_ATTEMPTS", "2"))
-    GEMINI_THINKING_LEVEL: str = (_clean_env(os.getenv("GEMINI_THINKING_LEVEL")) or "low").lower()
+    GEMINI_THINKING_BUDGET: int = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
     GEMINI_INCLUDE_THOUGHTS: bool = _env_bool("GEMINI_INCLUDE_THOUGHTS", True)
     
     # Security
