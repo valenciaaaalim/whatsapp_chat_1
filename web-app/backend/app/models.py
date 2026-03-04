@@ -101,6 +101,7 @@ class ScenarioResponse(Base):
     masked_text = Column(Text, nullable=True)  # PII-masked version
     risk_level = Column(String, nullable=True)  # Output_2 Risk_Level
     reasoning = Column("Reasoning", Text, nullable=True)  # Output_2 Reasoning
+    model = Column(String, nullable=True)  # Actual model used for rewrite generation
     suggested_rewrite = Column(Text, nullable=True)  # Suggested safer rewrite from LLM
     final_message = Column(Text, nullable=True)  # Final message sent by user
     primary_risk_factors = Column(Text, nullable=True)  # JSON array from Output_2 Primary_Risk_Factors

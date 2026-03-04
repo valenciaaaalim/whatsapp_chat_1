@@ -26,6 +26,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
   const [lastRawText, setLastRawText] = useState(null);
   const [lastHasPii, setLastHasPii] = useState(false);
   const [lastAssessedText, setLastAssessedText] = useState('');
+  const [rewriteDecision, setRewriteDecision] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [maskedHistory, setMaskedHistory] = useState(null);
   const [piiSpans, setPiiSpans] = useState([]);
@@ -82,6 +83,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     setRiskPending(false);
     setIsWarningOpen(false);
     setLastAssessedText('');
+    setRewriteDecision(null);
     setPiiSpans([]);
 
     const historyForMasking = initialMessages.map((m) => ({
@@ -228,8 +230,12 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     }
   };
 
-  const handleTyping = (text) => {
+  const handleTyping = (text, options = {}) => {
+    const { preserveDecision = false } = options;
     setDraftText(text);
+    if (!preserveDecision) {
+      setRewriteDecision(null);
+    }
 
     // New text input should immediately invalidate/abort prior analysis.
     clearLiveTimers();
@@ -376,7 +382,11 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
         reasoning: toSingleLineReasoning(
           response.data.reasoning || response.data.output_2?.reasoning || ''
         ),
-        originalInput: response.data.output_2?.original_user_message || maskedToUse || textToUse,
+        model: response.data.model || null,
+        // Persist the exact text and masking used at alert-time.
+        analysisInput: textToUse,
+        maskedInput: maskedToUse,
+        originalInput: textToUse,
         output1: response.data.output_1 || {},
         output2: response.data.output_2 || {}
       };
@@ -469,6 +479,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
 
     const finalText = draftText.trim();
     let analysis = warningState || lastRiskAnalysis;
+    const decisionAtSubmit = rewriteDecision;
 
     const newMessage = {
       id: `sent-${Date.now()}`,
@@ -486,21 +497,13 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     setLastOfferedRewrite(null);
     setLastShownRewrite(null);
     setIsWarningOpen(false);
+    setRewriteDecision(null);
     setLastAssessedText('');
     setPiiSpans([]);
     setCurrentMessageIndex((prev) => prev + 1);
 
-    if (variant === 'A' && (!analysis || lastAssessedText !== finalText)) {
-      const refreshed = await assessRisk(finalText, { openOnComplete: false, silent: true });
-      if (refreshed) {
-        analysis = refreshed;
-      }
-    }
-
-    const originalInput = analysis?.originalInput || finalText;
-    const finalMaskedText = (lastRawText && lastRawText.trim() === finalText)
-      ? lastMaskedText
-      : null;
+    const originalInput = analysis?.analysisInput || analysis?.originalInput || finalText;
+    const finalMaskedText = analysis?.maskedInput ?? null;
     const finalRewriteText = analysis?.saferRewrite || warningState?.saferRewrite || lastShownRewrite || lastOfferedRewrite;
 
     try {
@@ -510,6 +513,8 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
         participant_id: participantProlificId,
         conversation_index: conversationIndex,
         final_message: finalText,
+        accepted_rewrite: decisionAtSubmit,
+        model: variant === 'B' ? '[B]' : (analysis?.model || null),
         variant
       };
 
@@ -565,16 +570,18 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
   const handleAcceptRewrite = () => {
     if (warningState && warningState.saferRewrite) {
       const rewriteText = warningState.saferRewrite;
+      setRewriteDecision(true);
       // Clear stale underline immediately, then route through the normal
       // typing pipeline so GLiNER re-runs on the accepted rewrite.
       setPiiSpans([]);
-      handleTyping(rewriteText);
+      handleTyping(rewriteText, { preserveDecision: true });
       setLastShownRewrite(rewriteText);
     }
     setIsWarningOpen(false);
   };
 
   const handleContinueAnyway = () => {
+    setRewriteDecision(false);
     // Keep in-flight explicit analysis alive so it can be reused later
     // when the user has not changed the draft.
     if (riskPending) {

@@ -83,6 +83,7 @@ def _ensure_participant_views() -> None:
                 sr.masked_text,
                 sr.risk_level,
                 sr."Reasoning",
+                sr.model,
                 sr.suggested_rewrite,
                 sr.final_message,
                 sr.primary_risk_factors,
@@ -174,6 +175,28 @@ def _ensure_participant_views() -> None:
             conn.execute(text(f"CREATE VIEW {view_name} AS {select_sql}"))
 
 
+def _ensure_schema_columns() -> None:
+    """Add backward-compatible columns for existing databases."""
+    db_engine = require_db()
+    inspector = inspect(db_engine)
+
+    if "scenario_responses" not in inspector.get_table_names():
+        return
+
+    existing_columns = {col.get("name") for col in inspector.get_columns("scenario_responses")}
+    statements = []
+
+    if "model" not in existing_columns:
+        statements.append('ALTER TABLE scenario_responses ADD COLUMN "model" VARCHAR')
+
+    if not statements:
+        return
+
+    with db_engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
 def get_db():
     """Dependency to get database session."""
     db_engine = require_db()
@@ -203,6 +226,7 @@ def init_db() -> None:
     # Ensure all model classes are imported so Base.metadata knows every table.
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    _ensure_schema_columns()
     _ensure_participant_views()
     logger.info("Database tables initialized")
 

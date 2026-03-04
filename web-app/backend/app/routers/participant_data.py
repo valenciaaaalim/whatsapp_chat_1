@@ -266,6 +266,8 @@ def create_or_update_scenario_response(
             existing.original_input = data.original_input
         if data.masked_text is not None:
             existing.masked_text = data.masked_text
+        if data.model is not None:
+            existing.model = data.model
         if data.suggested_rewrite is not None:
             existing.suggested_rewrite = data.suggested_rewrite
         if data.reasoning is not None:
@@ -308,6 +310,7 @@ def create_or_update_scenario_response(
             scenario_number=data.scenario_number,
             original_input=data.original_input,
             masked_text=data.masked_text,
+            model=data.model,
             suggested_rewrite=data.suggested_rewrite,
             reasoning=data.reasoning,
             risk_level=data.risk_level,
@@ -377,10 +380,16 @@ def record_scenario_message(
 
     if existing and existing.final_message and existing.final_message.strip():
         raise HTTPException(status_code=409, detail="Scenario message already submitted")
-    
+
+    completion_time = get_singapore_time()
+    scenario_model = data.model
+    if (data.variant or "").strip().upper() == "B":
+        scenario_model = "[B]"
+
     if existing:
         # Update existing record
         existing.final_message = data.final_message
+        existing.completed_at = completion_time
         original_input = data.original_input if data.original_input is not None else data.final_raw_text
         if original_input is not None:
             existing.original_input = original_input
@@ -388,6 +397,8 @@ def record_scenario_message(
             existing.masked_text = data.final_masked_text
         if data.final_rewrite_text is not None:
             existing.suggested_rewrite = data.final_rewrite_text
+        if scenario_model is not None:
+            existing.model = scenario_model
 
         # Persist full Output_1 / Output_2 analysis fields for downstream analysis.
         if data.risk_level is not None:
@@ -417,21 +428,20 @@ def record_scenario_message(
         if data.psychological_pressure_explanation is not None:
             existing.psychological_pressure_explanation = data.psychological_pressure_explanation
 
-        # Determine if rewrite was accepted (final message matches rewrite)
-        if data.final_rewrite_text and data.final_message:
-            existing.accepted_rewrite = data.final_message.strip() == data.final_rewrite_text.strip()
+        # Persist explicit UI decision:
+        # true -> user clicked "Accept safer rewrite"
+        # false -> user clicked "Continue anyway"
+        # null -> neither button was clicked before submit
+        existing.accepted_rewrite = data.accepted_rewrite
         logger.info(f"[DB] Updated scenario_response for participant {participant.id}, scenario {scenario_number}")
     else:
         # Create new record
-        accepted_rewrite = None
-        if data.final_rewrite_text and data.final_message:
-            accepted_rewrite = data.final_message.strip() == data.final_rewrite_text.strip()
-        
         scenario_response = ScenarioResponse(
             participant_id=participant.id,
             scenario_number=scenario_number,
             original_input=data.original_input if data.original_input is not None else data.final_raw_text,
             masked_text=data.final_masked_text,
+            model=scenario_model,
             suggested_rewrite=data.final_rewrite_text,
             reasoning=data.reasoning,
             risk_level=data.risk_level,
@@ -447,7 +457,8 @@ def record_scenario_message(
             psychological_pressure_level=data.psychological_pressure_level,
             psychological_pressure_explanation=data.psychological_pressure_explanation,
             final_message=data.final_message,
-            accepted_rewrite=accepted_rewrite
+            accepted_rewrite=data.accepted_rewrite,
+            completed_at=completion_time,
         )
         db.add(scenario_response)
         logger.info(f"[DB] Created scenario_response for participant {participant.id}, scenario {scenario_number}")

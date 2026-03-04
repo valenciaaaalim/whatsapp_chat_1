@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './WelcomeScreen.css';
-import consentFormPdf from './003_OnlineSurvey_Consent_MobilePIILM.pdf';
+import consentFormPdf from './MobilePIILM_Consent.pdf';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 
@@ -88,7 +88,7 @@ function WelcomeScreen({ prolificId }) {
           <p style={{ marginTop: '18px' }}>
             <a
               href={consentFormPdf}
-              download="003_OnlineSurvey_Consent_MobilePIILM.pdf"
+              download="MobilePIILM_Consent.pdf"
               rel="noopener noreferrer"
               style={{ textDecoration: 'underline', color: '#2266bb', fontWeight: 500 }}
             >

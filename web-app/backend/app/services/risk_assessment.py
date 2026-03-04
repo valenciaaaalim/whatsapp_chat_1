@@ -322,6 +322,7 @@ class RiskAssessmentService:
             # Step 2: Call LLM API for Output 2
             logger.info("Calling LLM API for risk assessment")
             risk_result = self.llm.generate_json_content(first_prompt)
+            model_used = self.llm.get_last_model_used() if hasattr(self.llm, "get_last_model_used") else None
             normalized_result = self._normalize_risk_payload(
                 risk_result if isinstance(risk_result, dict) else {}
             )
@@ -378,6 +379,7 @@ class RiskAssessmentService:
                 "show_warning": show_warning,
                 "reasoning": reasoning,
                 "primary_risk_factors": primary_risk_factors,
+                "model": model_used,
                 "output_1": {
                     "linkability_risk": {
                         "level": self._get_value(linkability_risk, ["Level", "level"], ""),
@@ -411,6 +413,7 @@ class RiskAssessmentService:
         
         except Exception as e:
             logger.error(f"Risk assessment error: {e}", exc_info=True)
+            model_used = self.llm.get_last_model_used() if hasattr(self.llm, "get_last_model_used") else None
             # Keep warning flow active when PII was already detected, even if LLM is unavailable.
             fallback_rewrite = self._fallback_conversational_rewrite(draft_text=draft_text, masked_draft=masked_draft)
             fallback_risk = "MODERATE" if masked_draft else "LOW"
@@ -451,6 +454,7 @@ class RiskAssessmentService:
                 "show_warning": fallback_risk in {"MODERATE", "HIGH"},
                 "primary_risk_factors": [],
                 "reasoning": fallback_reasoning,
+                "model": model_used,
                 "output_1": fallback_output_1,
                 "output_2": fallback_output_2,
                 "error": str(e)

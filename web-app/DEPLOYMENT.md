@@ -68,23 +68,23 @@ Required/important variables:
 - `SECOND_MODEL_TIMEOUT_SECONDS`
 - `SECOND_MODEL_MAX_ATTEMPTS`
 - `LLM_SCENARIO_MAX_CALLS`
-- API key: `GOOGLE_API_KEY` (preferred) or `GEMINI_API_KEY`
+- API key: `GEMINI_API_KEY`
 
 ### Secret Manager (recommended)
 
 ```bash
 # Create secret once
-echo -n "your-google-api-key" | gcloud secrets create google-api-key --data-file=-
+echo -n "your-gemini-api-key" | gcloud secrets create gemini-api-key --data-file=-
 
 # Grant Cloud Run service account access
-gcloud secrets add-iam-policy-binding google-api-key \
+gcloud secrets add-iam-policy-binding gemini-api-key \
   --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
 # Attach secret to service env
 gcloud run services update "$SERVICE_NAME" \
   --region "$REGION" \
-  --update-secrets "GOOGLE_API_KEY=google-api-key:latest"
+  --update-secrets "GEMINI_API_KEY=gemini-api-key:latest"
 ```
 
 ## 4) Cloud SQL PostgreSQL

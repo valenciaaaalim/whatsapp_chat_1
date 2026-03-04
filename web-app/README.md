@@ -62,9 +62,8 @@ pip install -r requirements.txt
 4. Set env vars (example):
 
 ```env
-# API key (either works; GOOGLE_API_KEY is preferred if both are set)
-GOOGLE_API_KEY=your_key
-# GEMINI_API_KEY=your_key
+# API key
+GEMINI_API_KEY=your_key
 
 # Model routing
 GEMINI_FIRST_MODEL=gemini-3-flash-preview

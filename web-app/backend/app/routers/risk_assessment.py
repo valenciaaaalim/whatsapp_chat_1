@@ -527,6 +527,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
             "show_warning": False,
             "primary_risk_factors": [],
             "reasoning": "",
+            "model": None,
             "output_1": {
                 "linkability_risk": {"level": "", "explanation": ""},
                 "authentication_baiting": {"level": "", "explanation": ""},
@@ -670,6 +671,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
         "show_warning": result["show_warning"],
         "primary_risk_factors": result.get("primary_risk_factors", []),
         "reasoning": result.get("reasoning", ""),
+        "model": result.get("model"),
         "output_1": result.get("output_1", {}),
         "output_2": result.get("output_2", {})
     }

@@ -117,6 +117,7 @@ class ScenarioResponseCreate(BaseModel):
     scenario_number: int = Field(..., ge=1, le=3)
     original_input: Optional[str] = None  # Text sent to LLM for assessment
     masked_text: Optional[str] = None  # PII-masked version
+    model: Optional[str] = None  # Actual model used for rewrite generation
     suggested_rewrite: Optional[str] = None  # LLM suggested rewrite
     reasoning: Optional[str] = None
     risk_level: Optional[str] = None
@@ -139,6 +140,7 @@ class ScenarioResponseUpdate(BaseModel):
     """Scenario response update - for updating existing response."""
     original_input: Optional[str] = None
     masked_text: Optional[str] = None
+    model: Optional[str] = None
     suggested_rewrite: Optional[str] = None
     reasoning: Optional[str] = None
     risk_level: Optional[str] = None
@@ -166,6 +168,7 @@ class ScenarioResponseSchema(BaseModel):
     scenario_number: int
     original_input: Optional[str]
     masked_text: Optional[str]
+    model: Optional[str]
     suggested_rewrite: Optional[str]
     reasoning: Optional[str]
     risk_level: Optional[str]
@@ -345,6 +348,8 @@ class ScenarioMessageRecord(BaseModel):
     participant_id: str  # prolific_id
     conversation_index: int  # 0, 1, 2 -> maps to scenario_number 1, 2, 3
     final_message: str
+    accepted_rewrite: Optional[bool] = None  # true=accept button, false=continue button, null=no button pressed
+    model: Optional[str] = None  # Actual model used for this scenario's rewrite output
     variant: Optional[str] = None
     # Group A only: PII analysis fields
     original_input: Optional[str] = None  # Text sent to LLM for paired rewrite

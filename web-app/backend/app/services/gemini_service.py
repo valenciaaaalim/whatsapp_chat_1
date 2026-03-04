@@ -109,11 +109,9 @@ class GeminiService:
         timeout_seconds: Optional[int] = None,
         max_attempts: Optional[int] = None,
     ):
-        self.api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY
+        self.api_key = settings.GEMINI_API_KEY
         if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required")
-        if settings.GOOGLE_API_KEY and settings.GEMINI_API_KEY:
-            logger.info("Both GOOGLE_API_KEY and GEMINI_API_KEY are set; using GOOGLE_API_KEY.")
+            raise ValueError("GEMINI_API_KEY environment variable is required")
 
         self.model = settings.GEMINI_FIRST_MODEL
         self.first_model = settings.GEMINI_FIRST_MODEL
@@ -133,6 +131,7 @@ class GeminiService:
         self.base_url = "https://generativelanguage.googleapis.com"
         self.api_version = "v1beta"
         self._last_thought_summaries: List[str] = []
+        self._last_model_used: Optional[str] = None
 
     def _build_prompt_text(
         self,
@@ -262,6 +261,7 @@ class GeminiService:
                 if self._last_thought_summaries:
                     logger.info("[LLM] Thought summaries captured: %d", len(self._last_thought_summaries))
 
+                self._last_model_used = model_name
                 return self._extract_text(response)
             except Exception as e:
                 status = self._resolve_status_code(e)
@@ -344,6 +344,10 @@ class GeminiService:
         """Return thought summaries from the most recent request in this service instance."""
         return list(self._last_thought_summaries)
 
+    def get_last_model_used(self) -> Optional[str]:
+        """Return model id used by the most recent successful request."""
+        return self._last_model_used
+
     def generate_content(
         self,
         prompt: str,
@@ -353,6 +357,7 @@ class GeminiService:
         candidate = model or self.first_model
         content_text = self._build_prompt_text(prompt, context)
         self._last_thought_summaries = []
+        self._last_model_used = None
 
         try:
             return self._call_model_with_retries(

@@ -44,9 +44,6 @@ class Settings:
     )
     
     # Gemini API
-    # Per Google docs, GOOGLE_API_KEY is a supported standard env var.
-    # If both are set, prefer GOOGLE_API_KEY.
-    GOOGLE_API_KEY: Optional[str] = _clean_env(os.getenv("GOOGLE_API_KEY"))
     GEMINI_API_KEY: Optional[str] = _clean_env(os.getenv("GEMINI_API_KEY"))
     GEMINI_FIRST_MODEL: Optional[str] = _clean_env(os.getenv("GEMINI_FIRST_MODEL"))
     GEMINI_SECOND_MODEL: Optional[str] = _clean_env(os.getenv("GEMINI_SECOND_MODEL"))
