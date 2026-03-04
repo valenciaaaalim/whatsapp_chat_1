@@ -45,7 +45,7 @@ function WelcomeScreen({ prolificId }) {
     setSubmitting(true);
     try {
       await logConsent('yes');
-      navigate('/survey/pre');
+      navigate('/survey/pre', { replace: true });
     } catch (error) {
       console.error('Error logging consent:', error);
     } finally {

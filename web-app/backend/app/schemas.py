@@ -327,6 +327,16 @@ class ParticipantDataResponse(BaseModel):
     end_of_study_survey: Optional[EndOfStudySurveySchema] = None
 
 
+class ParticipantProgressResponse(BaseModel):
+    """Canonical participant progress state for route and write gating."""
+    is_complete: bool
+    max_conversation_index_unlocked: int
+    survey_unlocked: bool
+    completion_unlocked: bool
+    redirect_path: str
+    allowed_paths: List[str] = Field(default_factory=list)
+
+
 # =============================================================================
 # Legacy schemas for frontend compatibility (deprecated but kept for migration)
 # =============================================================================

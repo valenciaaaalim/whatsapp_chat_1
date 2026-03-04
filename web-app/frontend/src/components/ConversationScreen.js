@@ -6,6 +6,7 @@ import MessageList from './MessageList';
 import ChatComposer from './ChatComposer';
 import WarningModal from './WarningModal';
 import './ConversationScreen.css';
+import { getRedirectPathFrom409 } from '../utils/apiErrors';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 const PII_DEBOUNCE_MS = 800;
@@ -540,6 +541,11 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
 
       await axios.post(`${API_BASE_URL}/api/participants/message`, messagePayload);
     } catch (error) {
+      const redirectPath = getRedirectPathFrom409(error);
+      if (redirectPath) {
+        navigate(redirectPath, { replace: true });
+        return;
+      }
       console.error('[Send] error capturing user input', error);
     } finally {
       sendInFlightRef.current = false;
@@ -552,7 +558,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     if (userTypedMessages > 0 || currentMessageIndex >= allMessages.length) {
       setTimeout(() => {
         onComplete();
-        navigate(`/survey/mid?index=${conversationIndex}`);
+        navigate(`/survey/mid?index=${conversationIndex}`, { replace: true });
       }, 2000);
     }
   };

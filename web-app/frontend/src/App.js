@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
 import axios from 'axios';
 import WelcomeScreen from './components/WelcomeScreen';
 import ConversationScreen from './components/ConversationScreen';
@@ -102,6 +102,64 @@ function ConversationRoute({ conversations, participantId, prolificId, variant, 
       conversationIndex={conversationIndex}
     />
   );
+}
+
+function routeMatchesAllowed(location, allowedPath) {
+  if (!allowedPath) return false;
+  const currentPathWithSearch = `${location.pathname}${location.search || ''}`;
+  if (allowedPath.includes('?')) {
+    return currentPathWithSearch === allowedPath;
+  }
+  return location.pathname === allowedPath;
+}
+
+function StudyGuard({ participantId }) {
+  const location = useLocation();
+  const [checkingProgress, setCheckingProgress] = useState(true);
+  const [progressError, setProgressError] = useState('');
+  const [progress, setProgress] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadProgress = async () => {
+      if (!participantId) return;
+      setCheckingProgress(true);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/participants/${participantId}/progress`);
+        if (cancelled) return;
+        setProgress(response.data);
+        setProgressError('');
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[StudyGuard] Failed to load participant progress:', error);
+        setProgressError('Could not verify study progress.');
+      } finally {
+        if (!cancelled) {
+          setCheckingProgress(false);
+        }
+      }
+    };
+    loadProgress();
+    return () => {
+      cancelled = true;
+    };
+  }, [participantId, location.pathname, location.search]);
+
+  if (progressError) {
+    return <div className="error">{progressError}</div>;
+  }
+
+  if (checkingProgress || !progress) {
+    return <div className="loading">Checking progress...</div>;
+  }
+
+  const allowedPaths = progress.allowed_paths?.length ? progress.allowed_paths : [progress.redirect_path];
+  const isAllowed = allowedPaths.some((path) => routeMatchesAllowed(location, path));
+  if (!isAllowed) {
+    return <Navigate to={progress.redirect_path} replace />;
+  }
+
+  return <Outlet />;
 }
 
 function App() {
@@ -239,46 +297,48 @@ function App() {
     <Router>
       <div className="App">
         <Routes>
-          <Route 
-            path="/" 
-            element={
-              <WelcomeScreen 
-                prolificId={prolificId}
-                variant={variant}
-              />
-            } 
-          />
-          <Route 
-            path="/conversation/:index" 
-            element={
-              <ConversationRoute
-                conversations={conversations}
-                participantId={participantId}
-                prolificId={prolificId}
-                variant={variant}
-                onComplete={handleConversationComplete}
-              />
-            } 
-          />
-          <Route 
-            path="/survey/:type" 
-            element={
-              <SurveyScreen
-                participantId={participantId}
-                participantProlificId={prolificId}
-                variant={variant}
-              />
-            } 
-          />
-          <Route 
-            path="/completion" 
-            element={
-              <CompletionScreen
-                participantId={participantId}
-                prolificId={prolificId}
-              />
-            } 
-          />
+          <Route element={<StudyGuard participantId={participantId} />}>
+            <Route 
+              path="/" 
+              element={
+                <WelcomeScreen
+                  prolificId={prolificId}
+                  variant={variant}
+                />
+              } 
+            />
+            <Route 
+              path="/conversation/:index" 
+              element={
+                <ConversationRoute
+                  conversations={conversations}
+                  participantId={participantId}
+                  prolificId={prolificId}
+                  variant={variant}
+                  onComplete={handleConversationComplete}
+                />
+              } 
+            />
+            <Route 
+              path="/survey/:type" 
+              element={
+                <SurveyScreen
+                  participantId={participantId}
+                  participantProlificId={prolificId}
+                  variant={variant}
+                />
+              } 
+            />
+            <Route 
+              path="/completion" 
+              element={
+                <CompletionScreen
+                  participantId={participantId}
+                  prolificId={prolificId}
+                />
+              } 
+            />
+          </Route>
         </Routes>
       </div>
     </Router>

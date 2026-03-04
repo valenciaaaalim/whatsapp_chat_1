@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import axios from 'axios';
 import './SurveyScreen.css';
+import { getRedirectPathFrom409 } from '../utils/apiErrors';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
+const REDIRECT_ABORT = 'redirect_abort';
 
 // Baseline Self-Assessment (previously pre-survey) - 4 Likert 1-7 items
 const BASELINE_QUESTIONS = [
@@ -312,6 +314,13 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
         }
       }
       if (finalError?.response?.status === 409) {
+        const redirectPath = getRedirectPathFrom409(finalError);
+        if (redirectPath) {
+          navigate(redirectPath, { replace: true });
+          const redirectedError = new Error(REDIRECT_ABORT);
+          redirectedError.redirected = true;
+          throw redirectedError;
+        }
         console.warn(`[Survey] ${label} already submitted`, finalError.response?.data?.detail);
         return { ok: true, conflict: true };
       }
@@ -549,20 +558,23 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
 
       // Navigate based on survey type
       if (surveyType === 'baseline' || surveyType === 'pre') {
-        navigate('/conversation/0');
+        navigate('/conversation/0', { replace: true });
       } else if (surveyType === 'mid' || surveyType === 'post-scenario') {
         const nextIndex = parseInt(conversationIndex || '0') + 1;
         if (nextIndex < 3) {
-          navigate(`/conversation/${nextIndex}`);
+          navigate(`/conversation/${nextIndex}`, { replace: true });
         } else {
           // After 3rd conversation post-scenario survey, both groups go to end-of-study
-          navigate('/survey/end-of-study');
+          navigate('/survey/end-of-study', { replace: true });
         }
       } else {
         // End-of-study survey (both groups) -> completion
-        navigate('/completion');
+        navigate('/completion', { replace: true });
       }
     } catch (error) {
+      if (error?.redirected || error?.message === REDIRECT_ABORT) {
+        return;
+      }
       console.error('Error submitting survey:', error);
       const message = getSubmitErrorMessage(error);
       setSubmitError(message);

@@ -33,7 +33,8 @@ from app.schemas import (
     EndOfStudySurveyCreate,
     EndOfStudySurveySchema,
     ParticipantDataResponse,
-    ParticipantSchema
+    ParticipantSchema,
+    ParticipantProgressResponse,
 )
 from app.utils import ensure_singapore_tz, get_singapore_time
 
@@ -119,6 +120,87 @@ def build_participant_data_response(db: Session, participant: Participant) -> Pa
     )
 
 
+def build_participant_progress_response(db: Session, participant: Participant) -> ParticipantProgressResponse:
+    """Compute canonical progression state and redirect target for a participant."""
+    participant_id = participant.id
+    baseline_exists = db.query(BaselineAssessment.id).filter(
+        BaselineAssessment.participant_id == participant_id
+    ).first() is not None
+    end_of_study_exists = db.query(EndOfStudySurvey.id).filter(
+        EndOfStudySurvey.participant_id == participant_id
+    ).first() is not None
+
+    scenario_rows = db.query(
+        ScenarioResponse.scenario_number,
+        ScenarioResponse.final_message
+    ).filter(
+        ScenarioResponse.participant_id == participant_id
+    ).all()
+    scenario_final_submitted = {
+        int(row[0]) for row in scenario_rows
+        if row[1] is not None and str(row[1]).strip() != ""
+    }
+
+    post_scenario_numbers = {
+        int(row[0]) for row in db.query(PostScenarioSurvey.scenario_number).filter(
+            PostScenarioSurvey.participant_id == participant_id
+        ).all()
+    }
+
+    if participant.is_complete or participant.completed_at is not None or end_of_study_exists:
+        return ParticipantProgressResponse(
+            is_complete=True,
+            max_conversation_index_unlocked=2,
+            survey_unlocked=False,
+            completion_unlocked=True,
+            redirect_path="/completion",
+            allowed_paths=["/completion"],
+        )
+
+    if not baseline_exists:
+        return ParticipantProgressResponse(
+            is_complete=False,
+            max_conversation_index_unlocked=-1,
+            survey_unlocked=True,
+            completion_unlocked=False,
+            redirect_path="/",
+            allowed_paths=["/", "/survey/pre", "/survey/baseline"],
+        )
+
+    for scenario_number in (1, 2, 3):
+        conversation_index = scenario_number - 1
+        if scenario_number not in scenario_final_submitted:
+            path = f"/conversation/{conversation_index}"
+            return ParticipantProgressResponse(
+                is_complete=False,
+                max_conversation_index_unlocked=conversation_index,
+                survey_unlocked=False,
+                completion_unlocked=False,
+                redirect_path=path,
+                allowed_paths=[path],
+            )
+        if scenario_number not in post_scenario_numbers:
+            mid_path = f"/survey/mid?index={conversation_index}"
+            post_path = f"/survey/post-scenario?index={conversation_index}"
+            return ParticipantProgressResponse(
+                is_complete=False,
+                max_conversation_index_unlocked=conversation_index,
+                survey_unlocked=True,
+                completion_unlocked=False,
+                redirect_path=mid_path,
+                allowed_paths=[mid_path, post_path],
+            )
+
+    return ParticipantProgressResponse(
+        is_complete=False,
+        max_conversation_index_unlocked=2,
+        survey_unlocked=True,
+        completion_unlocked=False,
+        redirect_path="/survey/end-of-study",
+        allowed_paths=["/survey/end-of-study", "/survey/post"],
+    )
+
+
 # =============================================================================
 # Baseline Assessment endpoints (Table 2)
 # =============================================================================
@@ -130,6 +212,12 @@ def create_baseline_assessment(
 ):
     """Create baseline self-assessment for a participant."""
     participant = get_participant_by_id(db, participant_id)
+    progress = build_participant_progress_response(db, participant)
+    if progress.redirect_path not in {"/", "/survey/pre", "/survey/baseline"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
     
     # Check if baseline assessment already exists
     existing = db.query(BaselineAssessment).filter(
@@ -259,6 +347,25 @@ def record_scenario_message(
     participant = get_participant_by_prolific_id(db, data.participant_id)
     
     scenario_number = data.conversation_index + 1  # Convert 0-indexed to 1-indexed
+    progress = build_participant_progress_response(db, participant)
+    expected_path = f"/conversation/{data.conversation_index}"
+    if progress.redirect_path != expected_path:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
+
+    if participant.is_complete:
+        raise HTTPException(status_code=409, detail="Participant already completed")
+
+    scenario_survey_exists = db.query(PostScenarioSurvey.id).filter(
+        and_(
+            PostScenarioSurvey.participant_id == participant.id,
+            PostScenarioSurvey.scenario_number == scenario_number
+        )
+    ).first()
+    if scenario_survey_exists:
+        raise HTTPException(status_code=409, detail="Scenario already completed")
     
     # Check if scenario response already exists
     existing = db.query(ScenarioResponse).filter(
@@ -267,6 +374,9 @@ def record_scenario_message(
             ScenarioResponse.scenario_number == scenario_number
         )
     ).first()
+
+    if existing and existing.final_message and existing.final_message.strip():
+        raise HTTPException(status_code=409, detail="Scenario message already submitted")
     
     if existing:
         # Update existing record
@@ -357,6 +467,14 @@ def create_post_scenario_survey(
 ):
     """Create post-scenario survey response for a participant."""
     participant = get_participant_by_id(db, participant_id)
+    progress = build_participant_progress_response(db, participant)
+    expected_mid = f"/survey/mid?index={data.scenario_number - 1}"
+    expected_post = f"/survey/post-scenario?index={data.scenario_number - 1}"
+    if progress.redirect_path not in {expected_mid, expected_post}:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
     
     # Check if post-scenario survey already exists
     existing = db.query(PostScenarioSurvey).filter(
@@ -442,6 +560,12 @@ def create_sus_responses(
 ):
     """Create SUS responses for a participant (Group A only)."""
     participant = get_participant_by_id(db, participant_id)
+    progress = build_participant_progress_response(db, participant)
+    if progress.redirect_path not in {"/survey/end-of-study", "/survey/post"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
     
     if participant.variant != "A":
         raise HTTPException(status_code=400, detail="SUS responses are only for Group A participants")
@@ -491,6 +615,12 @@ def create_end_of_study_survey(
 ):
     """Create end-of-study survey response for a participant."""
     participant = get_participant_by_id(db, participant_id)
+    progress = build_participant_progress_response(db, participant)
+    if progress.redirect_path not in {"/survey/end-of-study", "/survey/post"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
     
     # Check if end-of-study survey already exists
     existing = db.query(EndOfStudySurvey).filter(
@@ -551,6 +681,16 @@ def get_participant_data(
     """Get all data for a single participant across all tables."""
     participant = get_participant_by_id(db, participant_id)
     return build_participant_data_response(db, participant)
+
+
+@router.get("/{participant_id}/progress", response_model=ParticipantProgressResponse)
+def get_participant_progress(
+    participant_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get canonical participant progress and next allowed route."""
+    participant = get_participant_by_id(db, participant_id)
+    return build_participant_progress_response(db, participant)
 
 
 @router.get("/by-prolific/{prolific_id}/data", response_model=ParticipantDataResponse)
