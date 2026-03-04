@@ -84,12 +84,37 @@ function ChatComposer({ draftText, onTextChange, onSend, variant, piiSpans = [],
       return draftText;
     }
 
-    // Sort spans by start position
-    const sortedSpans = [...piiSpans].sort((a, b) => a.start - b.start);
+    // Normalize and merge spans so adjacent/overlapping sensitive words render
+    // as one continuous highlight/underline block.
+    const normalizedSpans = piiSpans
+      .map((span) => ({
+        start: Math.max(0, Math.min(draftText.length, Number(span.start))),
+        end: Math.max(0, Math.min(draftText.length, Number(span.end))),
+      }))
+      .filter((span) => span.end > span.start)
+      .sort((a, b) => a.start - b.start);
+
+    const mergedSpans = [];
+    normalizedSpans.forEach((span) => {
+      const last = mergedSpans[mergedSpans.length - 1];
+      if (!last) {
+        mergedSpans.push({ ...span });
+        return;
+      }
+
+      const gapText = draftText.slice(last.end, span.start);
+      const canMerge = span.start <= last.end || /^\s*$/.test(gapText);
+      if (canMerge) {
+        last.end = Math.max(last.end, span.end);
+      } else {
+        mergedSpans.push({ ...span });
+      }
+    });
+
     const parts = [];
     let lastIndex = 0;
 
-    sortedSpans.forEach((span, idx) => {
+    mergedSpans.forEach((span, idx) => {
       // Add text before span
       if (span.start > lastIndex) {
         parts.push({

@@ -9,7 +9,7 @@ import './ConversationScreen.css';
 import { getRedirectPathFrom409 } from '../utils/apiErrors';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
-const PII_DEBOUNCE_MS = 800;
+const PII_DEBOUNCE_MS = 500;
 
 function ConversationScreen({ conversation, sessionId, participantId, participantProlificId, variant, onComplete, conversationIndex }) {
   const navigate = useNavigate();
@@ -463,6 +463,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
 
     sendInFlightRef.current = true;
     setIsSending(true);
+    setIsDrawerOpen(false);
     clearLiveTimers();
     livePipelineVersionRef.current += 1;
     riskRequestCounterRef.current += 1;
