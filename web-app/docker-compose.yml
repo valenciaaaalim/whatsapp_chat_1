@@ -19,7 +19,6 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - FRONTEND_URL=http://localhost:3000
-      - SESSION_COOKIE_SECURE=false
     volumes:
       - ./backend/data:/app/data  # For SQLite database persistence
       - ./backend/app/assets/annotated_test.json:/app/app/assets/annotated_test.json:ro  # Mount the JSON file for seeding (read-only)

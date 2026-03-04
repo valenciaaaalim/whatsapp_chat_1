@@ -87,14 +87,6 @@ class Settings:
     GEMINI_THINKING_BUDGET: str = _clean_env(os.getenv("GEMINI_THINKING_BUDGET")) or "-1"
     GEMINI_INCLUDE_THOUGHTS: bool = _env_bool("GEMINI_INCLUDE_THOUGHTS", True)
     
-    # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
-    CSRF_SECRET: str = os.getenv("CSRF_SECRET", "change-me-in-production")
-    SESSION_COOKIE_NAME: str = "session_id"
-    SESSION_COOKIE_SECURE: bool = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
-    SESSION_COOKIE_HTTPONLY: bool = True
-    SESSION_COOKIE_SAMESITE: str = "lax"
-    
     # Server settings
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8080"))

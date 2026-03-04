@@ -150,7 +150,7 @@ Set these in Cloud Run:
 
 ```bash
 gcloud run services update $SERVICE_NAME \
-  --update-env-vars "GEMINI_API_KEY=xxx,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=postgresql://...,FRONTEND_URL=https://your-domain.com,SESSION_COOKIE_SECURE=true"
+  --update-env-vars "GEMINI_API_KEY=xxx,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=postgresql://...,FRONTEND_URL=https://your-domain.com"
 ```
 
 ### Required Variables
@@ -166,9 +166,6 @@ gcloud run services update $SERVICE_NAME \
 - `SECOND_MODEL_MAX_ATTEMPTS`: Secondary max attempts
 - `DATABASE_URL`: PostgreSQL connection string (for production) or SQLite path
 - `FRONTEND_URL`: Your frontend URL for CORS
-- `SESSION_COOKIE_SECURE`: Set to `true` in production
-- `SECRET_KEY`: Random secret for session management
-- `CSRF_SECRET`: Random secret for CSRF protection
 
 ### Secrets Management
 
