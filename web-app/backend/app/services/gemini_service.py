@@ -118,7 +118,7 @@ class GeminiService:
         self.model = settings.GEMINI_FIRST_MODEL
         self.first_model = settings.GEMINI_FIRST_MODEL
         if not self.first_model:
-            raise ValueError("GEMINI_FIRST_MODEL (or legacy GEMINI_MODEL) environment variable is required")
+            raise ValueError("GEMINI_FIRST_MODEL environment variable is required")
         self.second_model = settings.GEMINI_SECOND_MODEL
         self.first_model_timeout_seconds = int(
             timeout_seconds if timeout_seconds is not None else settings.FIRST_MODEL_TIMEOUT_SECONDS

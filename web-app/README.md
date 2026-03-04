@@ -1,265 +1,177 @@
 # WhatsApp Risk Assessment Web App
 
-This is a web application for user testing of the WhatsApp risk assessment system, converted from the native Android app.
+Web study application for risk-assessment experiments.
 
-## Architecture
+## Current Deployment Shape
 
-- **Backend**: FastAPI (Python) with SQLite/PostgreSQL database
-- **Frontend**: React with React Router
-- **Services**:
-  - Gemini API integration for risk assessment
-- **Deployment**: Docker containers, Google Cloud Run, Cloudflare
+- Frontend: React app on Vercel (no frontend Cloud Run service)
+- Backend: FastAPI on Google Cloud Run
+- Database: Cloud SQL PostgreSQL via `DATABASE_URL`
+- CI/CD: Cloud Build trigger builds from `web-app/backend`
+
+## Repository Layout
+
+```text
+web-app/
+├── backend/
+│   ├── app/
+│   │   ├── routers/
+│   │   ├── services/
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── database.py
+│   │   └── main.py
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── gliner_service.py
+├── frontend/
+│   ├── src/
+│   └── package.json
+├── README.md
+└── DEPLOYMENT.md
+```
 
 ## Local Development
 
 ### Prerequisites
 
 - Python 3.11+
-- Node.js 16+ and npm
-- Docker and Docker Compose (for full stack)
+- Node.js 18+ and npm
 
-### Backend Setup
+### Backend
 
-1. **Navigate to backend directory:**
-   ```bash
-   cd web-app/backend
-   ```
-
-2. **Create virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set environment variables:**
-   Create a `.env` file:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_FIRST_MODEL=gemini-3-flash-preview
-   FIRST_MODEL_THINKING_POWER=medium
-   GEMINI_SECOND_MODEL=gemini-2.5-flash
-   SECOND_MODEL_THINKING_POWER=-1
-   FIRST_MODEL_TIMEOUT_SECONDS=20
-   FIRST_MODEL_MAX_ATTEMPTS=1
-   SECOND_MODEL_TIMEOUT_SECONDS=20
-   SECOND_MODEL_MAX_ATTEMPTS=1
-   DATABASE_URL=sqlite:///./web_app.db
-   FRONTEND_URL=http://localhost:3000
-   ```
-
-5. **Initialize database and seed data:**
-   ```bash
-   python seed_data.py
-   ```
-   
-   This initializes DB tables only. Seed conversations are served from `web-app/backend/app/assets/annotated_test.json` at runtime.
-
-6. **Run the backend:**
-   ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
-   ```
-
-### Frontend Setup
-
-1. **Navigate to frontend directory:**
-   ```bash
-   cd web-app/frontend
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Set environment variables:**
-   Create a `.env` file:
-   ```env
-   REACT_APP_BACKEND_BASE_URL=http://localhost:8080
-   ```
-
-4. **Run the frontend:**
-   ```bash
-   npm start
-   ```
-
-The frontend will be available at `http://localhost:3000`.
-
-### Docker Compose Setup (Recommended)
-
-1. **Configure Docker Desktop (macOS):**
-   To ensure containers continue running after quitting Docker Desktop:
-   - Open Docker Desktop
-   - Go to **Settings** (gear icon) → **General**
-   - Enable **"Start Docker Desktop when you log in"** (optional but recommended)
-   - Go to **Settings** → **Resources** → **Advanced**
-   - Ensure Docker Desktop is set to keep the daemon running
-   - **Important**: On macOS, Docker Desktop can be quit from the menu bar, but the Docker daemon will continue running in the background by default. Containers will keep running as long as the daemon is active.
-
-2. **Set environment variables:**
-   Create a `.env` file in the `web-app` directory:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_FIRST_MODEL=gemini-3-flash-preview
-   FIRST_MODEL_THINKING_POWER=medium
-   GEMINI_SECOND_MODEL=gemini-2.5-flash
-   SECOND_MODEL_THINKING_POWER=-1
-   FIRST_MODEL_TIMEOUT_SECONDS=20
-   FIRST_MODEL_MAX_ATTEMPTS=1
-   SECOND_MODEL_TIMEOUT_SECONDS=20
-   SECOND_MODEL_MAX_ATTEMPTS=1
-   ```
-
-3. **Start services in detached mode (runs in background):**
-   ```bash
-   cd web-app
-   docker-compose up -d --build
-   ```
-   
-   The `-d` flag runs containers in detached mode, so they continue running even after you close the terminal.
-
-4. **Seed the database:**
-   ```bash
-   docker-compose exec web-app-backend python seed_data.py
-   ```
-
-5. **View logs (optional):**
-   ```bash
-   # View all logs
-   docker-compose logs -f
-   
-   # View logs for specific service
-   docker-compose logs -f web-app-backend
-   docker-compose logs -f web-app-frontend
-   ```
-
-The backend will be available at `http://localhost:8080` and frontend at `http://localhost:3000`.
-
-### Docker Container Management
-
-**Start containers:**
-```bash
-cd web-app
-docker-compose up -d
-```
-
-**Stop containers:**
-```bash
-cd web-app
-docker-compose down
-```
-
-**Stop and remove volumes (clears database):**
-```bash
-docker-compose down -v
-```
-
-**Restart containers:**
-```bash
-docker-compose restart
-```
-
-**Check container status:**
-```bash
-docker-compose ps
-```
-
-**View running containers:**
-```bash
-docker ps
-```
-
-**Note**: Containers started with `docker-compose up -d` will continue running even if you:
-- Close the terminal window
-- Quit Docker Desktop GUI (on macOS, the daemon keeps running)
-- Log out and log back in (if Docker Desktop is set to start on login)
-
-To completely stop containers, use `docker-compose down` in the terminal.
-
-## Database Seeding
-
-Seed conversations are loaded at runtime from `web-app/backend/app/assets/annotated_test.json`:
+1. Go to backend:
 
 ```bash
 cd web-app/backend
-python seed_data.py
 ```
 
-Or with Docker:
+2. Create and activate venv:
+
 ```bash
-docker-compose exec web-app-backend python seed_data.py
+python -m venv venv
+source venv/bin/activate
 ```
 
-## API Endpoints
+3. Install deps:
 
-### Participants
-- `POST /api/participants` - Create participant (A/B assignment)
-- `GET /api/participants/{id}` - Get participant
+```bash
+pip install -r requirements.txt
+```
 
-### Conversations
-- `GET /api/conversations/seed` - Get all seed conversations
-- `GET /api/conversations/seed/{id}` - Get specific conversation
-- `POST /api/conversations/sessions/{participant_id}/{conversation_id}` - Create session
-- `GET /api/conversations/sessions/{session_id}` - Get session
+4. Set env vars (example):
 
-### Risk Assessment
-- `POST /api/risk/assess` - Assess risk of draft message
+```env
+# API key (either works; GOOGLE_API_KEY is preferred if both are set)
+GOOGLE_API_KEY=your_key
+# GEMINI_API_KEY=your_key
 
-### User Inputs
-- `POST /api/user-inputs` - Capture user input
-- `POST /api/user-inputs/with-warning` - Capture input with warning data
+# Model routing
+GEMINI_FIRST_MODEL=gemini-3-flash-preview
+FIRST_MODEL_THINKING_POWER=medium
+FIRST_MODEL_TIMEOUT_SECONDS=20
+FIRST_MODEL_MAX_ATTEMPTS=1
 
-### Surveys
-- `POST /api/surveys/responses` - Submit survey response
-- `GET /api/surveys/responses/{participant_id}` - Get responses
+GEMINI_SECOND_MODEL=gemini-2.5-flash
+SECOND_MODEL_THINKING_POWER=-1
+SECOND_MODEL_TIMEOUT_SECONDS=20
+SECOND_MODEL_MAX_ATTEMPTS=1
 
-### Completion
-- `GET /api/completion/prolific` - Get Prolific completion URL
-- `GET /api/completion/redirect` - Redirect to Prolific
+# LLM budget
+LLM_SCENARIO_MAX_CALLS=10
 
-## Security Features
+# CORS
+FRONTEND_URL=http://localhost:3000
 
-- CORS configuration
-- Environment-based secrets
-- HTTPS-only cookies (in production)
-- Input validation via Pydantic
-- Security headers middleware
+# Optional for local DB-backed flows
+# If omitted, app still starts; DB-backed endpoints return 503.
+DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/whatsapp_1
+```
+
+5. Start backend:
+
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+```
+
+Health check:
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+### Frontend
+
+1. Go to frontend:
+
+```bash
+cd web-app/frontend
+```
+
+2. Install deps:
+
+```bash
+npm install
+```
+
+3. Set frontend env var:
+
+```env
+REACT_APP_BACKEND_BASE_URL=http://localhost:8080
+```
+
+4. Start frontend:
+
+```bash
+npm start
+```
+
+Frontend runs on `http://localhost:3000`.
+
+## Seed Conversations
+
+Conversation scenarios are loaded from:
+
+- `web-app/backend/app/assets/annotated_test.json`
+
+At runtime they are exposed by:
+
+- `GET /api/conversations/seed`
+
+## Key API Endpoints
+
+Participants and progress:
+
+- `POST /api/participants`
+- `GET /api/participants/{participant_id}`
+- `GET /api/participants/by-prolific/{prolific_id}`
+- `GET /api/participants/{participant_id}/progress`
+- `GET /api/participants/{participant_id}/data`
+
+Risk and PII:
+
+- `POST /api/risk/assess`
+- `POST /pii/detect`
+- `GET /pii/status`
+
+Conversation seed:
+
+- `GET /api/conversations/seed`
+- `POST /api/conversations/reload` (dev use)
+
+Study responses:
+
+- `POST /api/participants/{participant_id}/baseline-assessment`
+- `POST /api/participants/message`
+- `POST /api/participants/{participant_id}/post-scenario-survey`
+- `POST /api/participants/{participant_id}/pii-disclosure`
+- `POST /api/participants/{participant_id}/sus-responses`
+- `POST /api/participants/{participant_id}/end-of-study-survey`
+
+Completion:
+
+- `GET /api/completion/prolific`
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
-
-## Testing Flow
-
-1. User arrives at welcome screen
-2. Participant is created and assigned to variant A or B
-3. User goes through three conversation scenarios
-4. After each conversation, user answers survey questions
-5. User is redirected to Prolific completion URL
-
-## Project Structure
-
-```
-web-app/
-├── backend/              # FastAPI backend
-│   ├── app/             # Application code
-│   │   ├── routers/     # API route handlers
-│   │   ├── services/    # Business logic
-│   │   ├── models.py    # Database models
-│   │   └── schemas.py   # Pydantic schemas
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── seed_data.py     # Database seeding script
-├── frontend/             # React frontend
-│   ├── src/
-│   │   ├── components/  # React components
-│   │   └── App.js       # Main app
-│   └── package.json
-├── docker-compose.yml   # Multi-service setup
-├── README.md           # This file
-└── DEPLOYMENT.md       # Deployment guide
-```
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for Cloud Run + Vercel deployment instructions.

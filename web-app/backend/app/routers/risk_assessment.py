@@ -552,7 +552,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
             budget_result = {
                 "allowed": False,
                 "cap_type": "scenario",
-                "limit": 10,
+                "limit": settings.LLM_SCENARIO_MAX_CALLS,
                 "total_calls": None,
                 "scenario_calls": None,
             }
@@ -567,7 +567,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
                 participant_id=participant_id,
                 scenario_id=scenario_id,
                 total_limit=30,
-                scenario_limit=10,
+                scenario_limit=settings.LLM_SCENARIO_MAX_CALLS,
             )
         if not budget_result["allowed"]:
             cap_type = budget_result["cap_type"]

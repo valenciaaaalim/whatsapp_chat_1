@@ -34,9 +34,6 @@ COPY app/ ./app/
 # Copy GLiNER service module
 COPY gliner_service.py .
 
-# Copy seed script
-COPY seed_data.py .
-
 # Create assets directory if needed
 RUN mkdir -p app/assets
 

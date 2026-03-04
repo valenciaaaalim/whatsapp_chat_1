@@ -3,12 +3,9 @@ Risk assessment pipeline service.
 """
 import logging
 import json
-import os
 import re
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from datetime import datetime
-from app.utils import get_singapore_time
 
 logger = logging.getLogger(__name__)
 
@@ -129,67 +126,6 @@ class RiskAssessmentService:
         if normalized == "HIGH":
             return "HIGH"
         return "LOW"
-
-    def _save_output_2(
-        self,
-        output: Dict[str, Any],
-        session_id: Optional[int],
-        prolific_id: Optional[str] = None
-    ) -> None:
-        """Persist OUTPUT 2 payloads under web-app/backend/app/data/llm_outputs (mounted volume)."""
-        try:
-            # Save to /app/app/data/llm_outputs (inside the app directory, maps to ./backend/app/data/llm_outputs)
-            # The docker-compose mounts ./backend/data:/app/data, but the app code is in /app/app/
-            # So we should save to /app/data/llm_outputs which maps to backend/data/llm_outputs
-            base_dir = Path("/app/data/llm_outputs")
-            
-            # Fallback: try relative path from app directory
-            if not base_dir.parent.exists():
-                app_data_dir = Path(__file__).resolve().parent.parent / "data" / "llm_outputs"
-                if app_data_dir.parent.exists():
-                    base_dir = app_data_dir
-                    logger.info("[LLM] Using fallback path: %s", base_dir)
-                else:
-                    # Last fallback: current working directory
-                    base_dir = Path("/tmp/llm_outputs")
-                    logger.warning("[LLM] Using /tmp fallback path: %s", base_dir)
-            
-            # Ensure directory exists
-            base_dir.mkdir(parents=True, exist_ok=True)
-            logger.info("[LLM] Output directory: %s (exists=%s, writable=%s)", 
-                       base_dir, base_dir.exists(), os.access(base_dir, os.W_OK))
-            
-            now_sgt = get_singapore_time()
-            timestamp = f"{now_sgt.strftime('%d%m%y_%H%M_%S')}_{now_sgt.microsecond // 1000:03d}"
-            prolific_tag = self._safe_filename_part(prolific_id) if prolific_id else "ProlificIDUnknown"
-            scenario_tag = f"Scenario{session_id}" if session_id is not None else "ScenarioUnknown"
-            filename = f"{prolific_tag}_{scenario_tag}_{timestamp}.json"
-            output_path = base_dir / filename
-
-            # Keep deterministic naming while still avoiding accidental overwrite.
-            if output_path.exists():
-                suffix = 2
-                while True:
-                    candidate = base_dir / f"{prolific_tag}_{scenario_tag}_{timestamp}_{suffix}.json"
-                    if not candidate.exists():
-                        output_path = candidate
-                        break
-                    suffix += 1
-            
-            # Write output
-            output_json = json.dumps(output, ensure_ascii=True, indent=2)
-            output_path.write_text(output_json, encoding='utf-8')
-            logger.info("[LLM] Output saved successfully to %s (size=%d bytes, exists=%s)", 
-                       output_path, len(output_json), output_path.exists())
-        except Exception as e:
-            logger.error("[LLM] Failed to save output: %s", e, exc_info=True)
-            # Don't raise - logging is enough, don't break the flow
-
-    def _safe_filename_part(self, value: str) -> str:
-        """Convert prolific id to a filesystem-safe fragment."""
-        cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", value.strip())
-        cleaned = re.sub(r"_+", "_", cleaned)
-        return cleaned[:80] if cleaned else "unknown"
 
     def _contains_mask_tokens(self, text: str) -> bool:
         """Detect placeholder masks like [LOCATION_CITY] in model output."""
@@ -389,7 +325,6 @@ class RiskAssessmentService:
             normalized_result = self._normalize_risk_payload(
                 risk_result if isinstance(risk_result, dict) else {}
             )
-            self._save_output_2(normalized_result, session_id=session_id, prolific_id=prolific_id)
 
             output_1 = normalized_result.get("Output_1", {})
             output_2 = normalized_result.get("Output_2", {})
@@ -510,45 +445,6 @@ class RiskAssessmentService:
                 "reasoning": fallback_reasoning,
                 "rewrite": fallback_rewrite
             }
-            try:
-                self._save_output_2(
-                    {
-                        "Output_1": {
-                            "Linkability_Risk": {
-                                "Level": fallback_output_1["linkability_risk"]["level"],
-                                "Explanation": fallback_output_1["linkability_risk"]["explanation"],
-                            },
-                            "Authentication_Baiting": {
-                                "Level": fallback_output_1["authentication_baiting"]["level"],
-                                "Explanation": fallback_output_1["authentication_baiting"]["explanation"],
-                            },
-                            "Contextual_Alignment": {
-                                "Level": fallback_output_1["contextual_alignment"]["level"],
-                                "Explanation": fallback_output_1["contextual_alignment"]["explanation"],
-                            },
-                            "Platform_Trust_Obligation": {
-                                "Level": fallback_output_1["platform_trust_obligation"]["level"],
-                                "Explanation": fallback_output_1["platform_trust_obligation"]["explanation"],
-                            },
-                            "Psychological_Pressure": {
-                                "Level": fallback_output_1["psychological_pressure"]["level"],
-                                "Explanation": fallback_output_1["psychological_pressure"]["explanation"],
-                            },
-                        },
-                        "Output_2": {
-                            "Original_User_Message": draft_text,
-                            "Risk_Level": fallback_risk,
-                            "Primary_Risk_Factors": [],
-                            "Reasoning": fallback_reasoning,
-                            "Rewrite": fallback_rewrite,
-                        },
-                        "error": str(e),
-                    },
-                    session_id=session_id,
-                    prolific_id=prolific_id,
-                )
-            except Exception:
-                logger.warning("[LLM] Failed to persist fallback output payload", exc_info=True)
             return {
                 "risk_level": fallback_risk,
                 "safer_rewrite": fallback_rewrite,

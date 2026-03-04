@@ -79,7 +79,7 @@ const resolveProlificId = () => {
 };
 
 // Component to handle conversation route with index parameter
-function ConversationRoute({ conversations, participantId, prolificId, variant, onComplete }) {
+function ConversationRoute({ conversations, prolificId, variant, onComplete }) {
   const { index } = useParams();
   const conversationIndex = parseInt(index || '0', 10);
   
@@ -94,8 +94,6 @@ function ConversationRoute({ conversations, participantId, prolificId, variant, 
   return (
     <ConversationScreen
       conversation={conversations[conversationIndex]}
-      sessionId={conversationIndex + 1}  // Simple session ID based on index
-      participantId={participantId}
       participantProlificId={prolificId}
       variant={variant}
       onComplete={onComplete}
@@ -312,7 +310,6 @@ function App() {
               element={
                 <ConversationRoute
                   conversations={conversations}
-                  participantId={participantId}
                   prolificId={prolificId}
                   variant={variant}
                   onComplete={handleConversationComplete}

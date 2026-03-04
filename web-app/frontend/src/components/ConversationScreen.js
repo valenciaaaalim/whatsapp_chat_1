@@ -11,7 +11,7 @@ import { getRedirectPathFrom409 } from '../utils/apiErrors';
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 const PII_DEBOUNCE_MS = 500;
 
-function ConversationScreen({ conversation, sessionId, participantId, participantProlificId, variant, onComplete, conversationIndex }) {
+function ConversationScreen({ conversation, participantProlificId, variant, onComplete, conversationIndex }) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [draftText, setDraftText] = useState('');

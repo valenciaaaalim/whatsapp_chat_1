@@ -1,304 +1,159 @@
-# Deployment Guide
+# Deployment Guide (Vercel + Cloud Run)
 
-This guide covers deployment of the web app to Google Cloud Run with Cloudflare in front.
+This guide matches the current production target:
 
-## Prerequisites
+- Frontend: Vercel (`web-app/frontend`)
+- Backend: FastAPI on Cloud Run (built from `web-app/backend`)
+- Database: Cloud SQL PostgreSQL (`DATABASE_URL`)
+- CI/CD: Cloud Build trigger on `main`
 
-- Google Cloud Platform account with billing enabled
-- Cloudflare account
-- Domain name (optional, can use Cloud Run provided domain)
-- `gcloud` CLI installed and configured
-- Docker installed
+## 1) Prerequisites
 
-## Google Cloud Run Deployment
+- GCP project with billing
+- `gcloud` CLI authenticated
+- Cloud Run, Cloud Build, Artifact Registry, Cloud SQL APIs enabled
+- Vercel project connected to this repository
 
-### 1. Set Up GCP Project
+Set common variables:
 
 ```bash
-# Set your project ID
 export PROJECT_ID=your-project-id
 export REGION=us-central1
-export SERVICE_NAME=web-app-backend
+export SERVICE_NAME=whatsapp-chat-1
 
-gcloud config set project $PROJECT_ID
+gcloud config set project "$PROJECT_ID"
 ```
 
-### 2. Enable Required APIs
+Enable APIs:
 
 ```bash
-gcloud services enable run.googleapis.com
-gcloud services enable containerregistry.googleapis.com
-gcloud services enable cloudbuild.googleapis.com
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com sqladmin.googleapis.com secretmanager.googleapis.com
 ```
 
-### 3. Build and Push Docker Image
+## 2) Backend Continuous Deployment (Cloud Build -> Cloud Run)
+
+Your trigger should build from:
+
+- Directory: `web-app/backend`
+- Dockerfile: `Dockerfile`
+- Branch: `main`
+
+If this trigger already exists, verify it still points to `web-app/backend`.
+
+After each push to `main`, Cloud Build should:
+
+1. Build backend image
+2. Deploy a new Cloud Run revision
+
+## 3) Cloud Run Environment Variables
+
+Set/update backend env vars on the Cloud Run service:
 
 ```bash
-cd web-app/backend
-
-# Build and push to Container Registry
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME
-
-# Or use Artifact Registry (recommended)
-gcloud artifacts repositories create web-app-repo \
-  --repository-format=docker \
-  --location=$REGION
-
-gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT_ID/web-app-repo/$SERVICE_NAME
+gcloud run services update "$SERVICE_NAME" \
+  --region "$REGION" \
+  --update-env-vars "FRONTEND_URL=https://your-vercel-domain.vercel.app,DATABASE_URL=postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME,LLM_SCENARIO_MAX_CALLS=10,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1"
 ```
 
-### 4. Deploy to Cloud Run
+Required/important variables:
+
+- `DATABASE_URL`
+- `FRONTEND_URL` (must include protocol, for example `https://...vercel.app`)
+- `GEMINI_FIRST_MODEL`
+- `FIRST_MODEL_THINKING_POWER`
+- `FIRST_MODEL_TIMEOUT_SECONDS`
+- `FIRST_MODEL_MAX_ATTEMPTS`
+- `GEMINI_SECOND_MODEL`
+- `SECOND_MODEL_THINKING_POWER`
+- `SECOND_MODEL_TIMEOUT_SECONDS`
+- `SECOND_MODEL_MAX_ATTEMPTS`
+- `LLM_SCENARIO_MAX_CALLS`
+- API key: `GOOGLE_API_KEY` (preferred) or `GEMINI_API_KEY`
+
+### Secret Manager (recommended)
 
 ```bash
-gcloud run deploy $SERVICE_NAME \
-  --image $REGION-docker.pkg.dev/$PROJECT_ID/web-app-repo/$SERVICE_NAME \
-  --platform managed \
-  --region $REGION \
-  --allow-unauthenticated \
-  --memory 2Gi \
-  --cpu 2 \
-  --timeout 300 \
-  --max-instances 10 \
-  --min-instances 0 \
-  --set-env-vars "GEMINI_API_KEY=your_api_key,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=sqlite:///tmp/web_app.db,FRONTEND_URL=https://your-domain.com"
-```
+# Create secret once
+echo -n "your-google-api-key" | gcloud secrets create google-api-key --data-file=-
 
-### 5. Get Cloud Run URL
-
-After deployment, note the service URL:
-```bash
-gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)'
-```
-
-## Cloudflare Configuration
-
-### 1. Add Domain to Cloudflare
-
-1. Log in to Cloudflare dashboard
-2. Add your domain (or subdomain)
-3. Update nameservers at your domain registrar
-
-### 2. Create DNS Record
-
-Create a CNAME record pointing to your Cloud Run service:
-- **Type**: CNAME
-- **Name**: `api` (or your subdomain)
-- **Target**: `your-service-url.run.app` (from Cloud Run)
-- **Proxy status**: Proxied (orange cloud)
-
-### 3. SSL/TLS Configuration
-
-1. Go to **SSL/TLS** settings
-2. Set encryption mode to **Full** or **Full (strict)**
-3. Enable **Always Use HTTPS**
-
-### 4. WAF Rules
-
-Create WAF rules to protect your API:
-
-1. Go to **Security** > **WAF**
-2. Create rules for:
-   - Rate limiting (e.g., 100 requests/minute per IP)
-   - Block suspicious patterns
-   - Geo-blocking if needed
-
-### 5. Origin Settings
-
-1. Go to **Network** settings
-2. Enable:
-   - **HTTP/2**
-   - **HTTP/3 (QUIC)**
-   - **0-RTT Connection Resumption**
-
-### 6. Cloudflare Workers (Optional)
-
-For additional security, you can create a Cloudflare Worker to:
-- Add custom headers
-- Implement additional rate limiting
-- Log requests
-
-Example worker:
-```javascript
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request))
-})
-
-async function handleRequest(request) {
-  // Add security headers
-  const response = await fetch(request, {
-    cf: {
-      cacheEverything: false,
-    }
-  })
-  
-  const newHeaders = new Headers(response.headers)
-  newHeaders.set('X-Content-Type-Options', 'nosniff')
-  newHeaders.set('X-Frame-Options', 'DENY')
-  newHeaders.set('X-XSS-Protection', '1; mode=block')
-  
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders
-  })
-}
-```
-
-## Environment Variables
-
-Set these in Cloud Run:
-
-```bash
-gcloud run services update $SERVICE_NAME \
-  --update-env-vars "GEMINI_API_KEY=xxx,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=postgresql://...,FRONTEND_URL=https://your-domain.com"
-```
-
-### Required Variables
-
-- `GEMINI_API_KEY`: Your Google Gemini API key
-- `GEMINI_FIRST_MODEL`: Primary Gemini model ID (for example `gemini-3-flash-preview`)
-- `FIRST_MODEL_THINKING_POWER`: Primary thinking power (`-1`, `0`, integers, or words like `low|medium|high|dynamic`)
-- `FIRST_MODEL_TIMEOUT_SECONDS`: Primary timeout for normal (submit) requests
-- `FIRST_MODEL_MAX_ATTEMPTS`: Primary max attempts before trying fallback model
-- `GEMINI_SECOND_MODEL`: Secondary fallback model ID (for example `gemini-2.5-flash`)
-- `SECOND_MODEL_THINKING_POWER`: Secondary thinking power (`-1`, `0`, integers, or words like `low|medium|high|dynamic`)
-- `SECOND_MODEL_TIMEOUT_SECONDS`: Secondary timeout for normal (submit) fallback calls
-- `SECOND_MODEL_MAX_ATTEMPTS`: Secondary max attempts
-- `DATABASE_URL`: PostgreSQL connection string (for production) or SQLite path
-- `FRONTEND_URL`: Your frontend URL for CORS
-
-### Secrets Management
-
-For sensitive values, use Secret Manager:
-
-```bash
-# Create secret
-echo -n "your-api-key" | gcloud secrets create gemini-api-key --data-file=-
-
-# Grant access
-gcloud secrets add-iam-policy-binding gemini-api-key \
+# Grant Cloud Run service account access
+gcloud secrets add-iam-policy-binding google-api-key \
   --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
-# Use in Cloud Run
-gcloud run services update $SERVICE_NAME \
-  --update-secrets="GEMINI_API_KEY=gemini-api-key:latest"
+# Attach secret to service env
+gcloud run services update "$SERVICE_NAME" \
+  --region "$REGION" \
+  --update-secrets "GOOGLE_API_KEY=google-api-key:latest"
 ```
 
-## Database Setup (PostgreSQL)
+## 4) Cloud SQL PostgreSQL
 
-For production, use Cloud SQL:
+Use a PostgreSQL URL in `DATABASE_URL`.
+
+Example format:
+
+```text
+postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
+```
+
+If using Cloud SQL Unix socket, use the corresponding socket-based SQLAlchemy URL supported by your environment.
+
+## 5) Frontend Deployment (Vercel)
+
+In Vercel project settings:
+
+1. Root Directory: `web-app/frontend`
+2. Build command: `npm run build`
+3. Output directory: `build` (CRA)
+4. Environment variables:
+
+```env
+REACT_APP_BACKEND_BASE_URL=https://YOUR_CLOUD_RUN_URL
+```
+
+Then redeploy from Vercel Deployments.
+
+## 6) Verification
+
+Get backend URL:
 
 ```bash
-# Create Cloud SQL instance
-gcloud sql instances create web-app-db \
-  --database-version=POSTGRES_15 \
-  --tier=db-f1-micro \
-  --region=$REGION
-
-# Create database
-gcloud sql databases create webapp --instance=web-app-db
-
-# Create user
-gcloud sql users create webapp-user \
-  --instance=web-app-db \
-  --password=your-secure-password
-
-# Get connection name
-gcloud sql instances describe web-app-db --format="value(connectionName)"
-
-# Connect Cloud Run to Cloud SQL
-gcloud run services update $SERVICE_NAME \
-  --add-cloudsql-instances=CONNECTION_NAME \
-  --update-env-vars="DATABASE_URL=postgresql://webapp-user:password@/webapp?host=/cloudsql/CONNECTION_NAME"
+gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)'
 ```
 
-## Frontend Deployment
-
-### Option 1: Static Hosting (Cloudflare Pages)
-
-1. Build the frontend:
-   ```bash
-   cd web-app/frontend
-   npm run build
-   ```
-
-2. Deploy to Cloudflare Pages:
-   - Connect your Git repository
-   - Set build command: `npm run build`
-   - Set output directory: `build`
-   - Set environment variable: `REACT_APP_BACKEND_BASE_URL=https://api.your-domain.com`
-
-### Option 2: Cloud Run
-
-Create a Dockerfile for the frontend:
-
-```dockerfile
-FROM node:18-alpine as build
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build
-
-FROM nginx:alpine
-COPY --from=build /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-Deploy similarly to backend.
-
-## Monitoring and Logging
-
-### Cloud Run Logs
+Health check:
 
 ```bash
-gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE_NAME" --limit 50
+curl "https://YOUR_CLOUD_RUN_URL/healthz"
 ```
 
-### Cloudflare Analytics
-
-View analytics in Cloudflare dashboard:
-- **Analytics** > **Web Traffic**
-- **Security** > **Events**
-
-## Health Checks
-
-The service provides a health check endpoint:
+Read logs:
 
 ```bash
-curl https://api.your-domain.com/health
+gcloud run services logs read "$SERVICE_NAME" --region "$REGION" --limit 100
 ```
 
-Set up uptime monitoring:
-- Cloudflare Uptime Monitoring
-- Google Cloud Monitoring alerts
+## 7) Common Issues
 
-## Troubleshooting
+1. CORS blocked from Vercel
+- Ensure `FRONTEND_URL` exactly matches deployed Vercel origin.
 
-### Common Issues
+2. Backend tries localhost from frontend
+- Ensure Vercel env var `REACT_APP_BACKEND_BASE_URL` is set.
+- Redeploy frontend after env var changes.
 
-1. **CORS errors**: Ensure `FRONTEND_URL` matches your frontend domain
-2. **Database connection errors**: Check Cloud SQL connection configuration
-3. **API key errors**: Verify `GEMINI_API_KEY` is set correctly
-4. **Timeout errors**: Increase Cloud Run timeout if needed
+3. DB errors on startup
+- Check `DATABASE_URL` value and Cloud SQL connectivity.
 
-### Debugging
+4. Cloud Build path failures
+- Ensure trigger build context is `web-app/backend`.
+
+## 8) Local Notes
+
+- Backend listens on Cloud Run injected `PORT` (normally `8080`).
+- Local run command remains:
 
 ```bash
-# View logs
-gcloud run services logs read $SERVICE_NAME --region $REGION
-
-# Check service status
-gcloud run services describe $SERVICE_NAME --region $REGION
+uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
-
-## Cost Optimization
-
-- Use `min-instances=0` to scale to zero
-- Use appropriate memory/CPU allocation
-- Enable Cloud CDN for static assets
-- Use Cloudflare caching for API responses where appropriate
-- Monitor usage with Cloud Monitoring
