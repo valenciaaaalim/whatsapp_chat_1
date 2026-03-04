@@ -6,9 +6,11 @@ import consentFormPdf from './MobilePIILM_Consent.pdf';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 
-function WelcomeScreen({ prolificId }) {
+function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const [waitingForPiiModel, setWaitingForPiiModel] = useState(false);
+  const [loadingDots, setLoadingDots] = useState('.');
   const [hasReachedBottom, setHasReachedBottom] = useState(false);
   const scrollContainerRef = useRef(null);
 
@@ -39,19 +41,42 @@ function WelcomeScreen({ prolificId }) {
     return () => window.removeEventListener('resize', updateScrollState);
   }, [updateScrollState]);
 
+  useEffect(() => {
+    if (!waitingForPiiModel) {
+      return undefined;
+    }
+    const frames = ['.', '..', '...'];
+    let index = 0;
+    setLoadingDots(frames[0]);
+    const interval = setInterval(() => {
+      index = (index + 1) % frames.length;
+      setLoadingDots(frames[index]);
+    }, 450);
+    return () => clearInterval(interval);
+  }, [waitingForPiiModel]);
+
   const handleContinue = async () => {
-    if (!hasReachedBottom || submitting) return;
+    if (!hasReachedBottom || submitting || waitingForPiiModel) return;
 
     setSubmitting(true);
     try {
+      if (variant === 'A' && !piiReady) {
+        setWaitingForPiiModel(true);
+        await waitForPiiReady();
+      }
       await logConsent('yes');
       navigate('/survey/pre', { replace: true });
     } catch (error) {
       console.error('Error logging consent:', error);
     } finally {
+      setWaitingForPiiModel(false);
       setSubmitting(false);
     }
   };
+
+  if (waitingForPiiModel) {
+    return <div className="loading">Loading privacy model{loadingDots}</div>;
+  }
 
   return (
     <div className="consent-screen">

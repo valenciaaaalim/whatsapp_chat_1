@@ -2,6 +2,7 @@
 PII detection endpoint using GLiNER service.
 """
 import logging
+import threading
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/pii", tags=["pii"])
 
 # Global service instance (lazy loaded)
 _gliner_service: Optional[GliNERService] = None
+_warmup_in_progress = False
 
 
 def get_gliner_service() -> GliNERService:
@@ -32,6 +34,25 @@ def get_gliner_service() -> GliNERService:
         _gliner_service = GliNERService()
         _gliner_service.initialize()
     return _gliner_service
+
+
+def _start_warmup_in_background() -> None:
+    """Ensure GLiNER warmup runs asynchronously without blocking requests."""
+    global _warmup_in_progress
+    if _warmup_in_progress:
+        return
+
+    def _warmup():
+        global _warmup_in_progress
+        try:
+            get_gliner_service()
+        except Exception as exc:
+            logger.warning("Background GLiNER warmup attempt failed: %s", exc)
+        finally:
+            _warmup_in_progress = False
+
+    _warmup_in_progress = True
+    threading.Thread(target=_warmup, daemon=True).start()
 
 
 class PiiDetectRequest(BaseModel):
@@ -90,7 +111,11 @@ async def detect_pii(request: PiiDetectRequest):
 async def pii_status():
     """Return whether the GLiNER model is loaded."""
     try:
-        loaded = get_gliner_service().is_loaded()
+        # Non-blocking status check: do not trigger model initialization here.
+        service = _gliner_service
+        loaded = bool(service and service.is_loaded())
+        if not loaded:
+            _start_warmup_in_background()
     except Exception:
         loaded = False
     return {"loaded": loaded}

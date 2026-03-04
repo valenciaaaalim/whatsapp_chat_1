@@ -78,6 +78,24 @@ const resolveProlificId = () => {
   return generatedId;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function AnimatedLoading({ message }) {
+  const [dots, setDots] = useState('.');
+
+  useEffect(() => {
+    const frames = ['.', '..', '...'];
+    let index = 0;
+    const interval = setInterval(() => {
+      index = (index + 1) % frames.length;
+      setDots(frames[index]);
+    }, 450);
+    return () => clearInterval(interval);
+  }, []);
+
+  return <div className="loading">{message}{dots}</div>;
+}
+
 // Component to handle conversation route with index parameter
 function ConversationRoute({ conversations, prolificId, variant, onComplete }) {
   const { index } = useParams();
@@ -172,6 +190,7 @@ function App() {
   const [loading, setLoading] = useState(!isAdminRoute);
   const [initialized, setInitialized] = useState(false);
   const [piiReady, setPiiReady] = useState(true);
+  const [initialPiiDelayDone, setInitialPiiDelayDone] = useState(false);
 
   const initializeParticipant = useCallback(async () => {
     try {
@@ -220,16 +239,33 @@ function App() {
   const checkPiiStatus = useCallback(async () => {
     if (variant !== 'A') {
       setPiiReady(true);
-      return;
+      return true;
     }
     try {
       const response = await axios.get(`${API_BASE_URL}/pii/status`);
-      setPiiReady(Boolean(response.data?.loaded));
+      const loaded = Boolean(response.data?.loaded);
+      setPiiReady(loaded);
+      return loaded;
     } catch (error) {
       console.error('Error checking PII status:', error);
       setPiiReady(false);
+      return false;
     }
   }, [variant]);
+
+  const waitForPiiReady = useCallback(async () => {
+    if (variant !== 'A') {
+      return true;
+    }
+
+    while (true) {
+      const loaded = await checkPiiStatus();
+      if (loaded) {
+        return true;
+      }
+      await sleep(1500);
+    }
+  }, [variant, checkPiiStatus]);
 
   useEffect(() => {
     if (isAdminRoute) {
@@ -255,6 +291,26 @@ function App() {
     }
     return undefined;
   }, [variant, isAdminRoute, checkPiiStatus]);
+
+  useEffect(() => {
+    if (isAdminRoute) {
+      return undefined;
+    }
+    if (!variant) {
+      return undefined;
+    }
+    if (variant !== 'A') {
+      setInitialPiiDelayDone(true);
+      return undefined;
+    }
+
+    setInitialPiiDelayDone(false);
+    const timer = setTimeout(() => {
+      setInitialPiiDelayDone(true);
+    }, 10000);
+
+    return () => clearTimeout(timer);
+  }, [variant, isAdminRoute]);
 
   const handleConversationComplete = () => {
     if (currentConversationIndex < conversations.length - 1) {
@@ -287,8 +343,8 @@ function App() {
     return <div className="error">Error initializing participant</div>;
   }
 
-  if (variant === 'A' && !piiReady) {
-    return <div className="loading">Loading PII model...</div>;
+  if (variant === 'A' && !initialPiiDelayDone) {
+    return <AnimatedLoading message="Loading privacy model" />;
   }
 
   return (
@@ -302,6 +358,8 @@ function App() {
                 <WelcomeScreen
                   prolificId={prolificId}
                   variant={variant}
+                  piiReady={piiReady}
+                  waitForPiiReady={waitForPiiReady}
                 />
               } 
             />
