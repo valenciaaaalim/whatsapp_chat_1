@@ -3,6 +3,7 @@ Gemini API service abstraction layer.
 """
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -19,6 +20,87 @@ def _timestamp() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
 
 
+_THINKING_LEVEL_VALUES = {"minimal", "low", "medium", "high"}
+_THINKING_BUDGET_WORD_MAP = {
+    "off": 0,
+    "none": 0,
+    "disabled": 0,
+    "zero": 0,
+    "dynamic": -1,
+    "default": -1,
+    "auto": -1,
+    "low": 1024,
+    "medium": 8192,
+    "high": 24576,
+}
+
+
+def _normalize_model_name(model_name: str) -> str:
+    normalized = (model_name or "").strip().lower()
+    if normalized.startswith("models/"):
+        return normalized[len("models/"):]
+    return normalized
+
+
+def _is_gemini_3_model(model_name: str) -> bool:
+    normalized = _normalize_model_name(model_name)
+    return normalized.startswith("gemini-3")
+
+
+def _budget_from_thinking_power(raw_value: Any, default_value: int = -1) -> int:
+    """Parse integer thinking budget from either integer-like values or words."""
+    if raw_value is None:
+        return int(default_value)
+
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return int(default_value)
+
+    if re.fullmatch(r"-?\d+", normalized):
+        return int(normalized)
+
+    if normalized in _THINKING_BUDGET_WORD_MAP:
+        return int(_THINKING_BUDGET_WORD_MAP[normalized])
+
+    logger.warning("Unknown thinking power value '%s'; using default=%s", raw_value, default_value)
+    return int(default_value)
+
+
+def _level_from_thinking_power(raw_value: Any) -> Optional[str]:
+    """
+    Convert env thinking power into Gemini 3 thinkingLevel.
+    Returns None to defer to model default behavior.
+    """
+    if raw_value is None:
+        return None
+
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return None
+
+    if normalized in _THINKING_LEVEL_VALUES:
+        return normalized
+
+    if normalized in {"off", "none", "disabled", "zero"}:
+        return "minimal"
+
+    if normalized in {"dynamic", "default", "auto", "-1"}:
+        return None
+
+    if re.fullmatch(r"-?\d+", normalized):
+        value = int(normalized)
+        if value <= 0:
+            return "minimal"
+        if value <= 4096:
+            return "low"
+        if value <= 12288:
+            return "medium"
+        return "high"
+
+    logger.warning("Unknown Gemini 3 thinking level value '%s'; using model default", raw_value)
+    return None
+
+
 class GeminiService:
     """Service for interacting with Gemini using generateContent REST API."""
 
@@ -33,10 +115,20 @@ class GeminiService:
         if settings.GOOGLE_API_KEY and settings.GEMINI_API_KEY:
             logger.info("Both GOOGLE_API_KEY and GEMINI_API_KEY are set; using GOOGLE_API_KEY.")
 
-        self.model = settings.GEMINI_MODEL
-        self.timeout = int(timeout_seconds if timeout_seconds is not None else settings.GEMINI_TIMEOUT_SECONDS)
-        self.max_attempts = max(1, int(max_attempts if max_attempts is not None else settings.GEMINI_MAX_ATTEMPTS))
-        self.thinking_budget = int(settings.GEMINI_THINKING_BUDGET)
+        self.model = settings.GEMINI_FIRST_MODEL
+        self.first_model = settings.GEMINI_FIRST_MODEL
+        if not self.first_model:
+            raise ValueError("GEMINI_FIRST_MODEL (or legacy GEMINI_MODEL) environment variable is required")
+        self.second_model = settings.GEMINI_SECOND_MODEL
+        self.first_model_timeout_seconds = int(
+            timeout_seconds if timeout_seconds is not None else settings.FIRST_MODEL_TIMEOUT_SECONDS
+        )
+        primary_attempts = max_attempts if max_attempts is not None else settings.FIRST_MODEL_MAX_ATTEMPTS
+        self.primary_max_attempts = max(1, int(primary_attempts))
+        self.second_model_timeout_seconds = int(settings.SECOND_MODEL_TIMEOUT_SECONDS)
+        self.second_model_max_attempts = max(1, int(settings.SECOND_MODEL_MAX_ATTEMPTS))
+        self.first_model_thinking_power = settings.FIRST_MODEL_THINKING_POWER
+        self.second_model_thinking_power = settings.SECOND_MODEL_THINKING_POWER
         self.include_thoughts = settings.GEMINI_INCLUDE_THOUGHTS
         self.base_url = "https://generativelanguage.googleapis.com"
         self.api_version = "v1beta"
@@ -59,8 +151,24 @@ class GeminiService:
             resource = f"models/{resource}"
         return quote(resource, safe="/._-")
 
-    def _build_request_payload(self, content_text: str) -> Dict[str, Any]:
-        """Build generateContent request payload with thinking configuration."""
+    def _build_thinking_config(self, model_name: str, thinking_power: Any) -> Dict[str, Any]:
+        """Build model-specific thinking config."""
+        config: Dict[str, Any] = {"includeThoughts": self.include_thoughts}
+
+        # Gemini 3 models prefer thinkingLevel (minimal|low|medium|high).
+        if _is_gemini_3_model(model_name):
+            level = _level_from_thinking_power(thinking_power)
+            if level:
+                config["thinkingLevel"] = level
+            return config
+
+        # Other models use thinkingBudget integers.
+        budget = _budget_from_thinking_power(thinking_power, default_value=-1)
+        config["thinkingBudget"] = budget
+        return config
+
+    def _build_request_payload(self, model_name: str, content_text: str, thinking_power: Any) -> Dict[str, Any]:
+        """Build generateContent request payload with model-specific thinking configuration."""
         return {
             "contents": [
                 {
@@ -70,18 +178,28 @@ class GeminiService:
                 }
             ],
             "generationConfig": {
-                "thinkingConfig": {
-                    "thinkingBudget": self.thinking_budget,
-                    "includeThoughts": self.include_thoughts,
-                }
+                "thinkingConfig": self._build_thinking_config(
+                    model_name=model_name,
+                    thinking_power=thinking_power,
+                )
             },
         }
 
-    def _generate_content_via_rest(self, model_name: str, content_text: str) -> Dict[str, Any]:
+    def _generate_content_via_rest(
+        self,
+        model_name: str,
+        content_text: str,
+        timeout_seconds: int,
+        thinking_power: Any,
+    ) -> Dict[str, Any]:
         """Call Gemini generateContent endpoint directly."""
         model_resource = self._model_resource(model_name)
         url = f"{self.base_url}/{self.api_version}/{model_resource}:generateContent"
-        payload = self._build_request_payload(content_text)
+        payload = self._build_request_payload(
+            model_name=model_name,
+            content_text=content_text,
+            thinking_power=thinking_power,
+        )
         headers = {
             "Content-Type": "application/json",
             "X-goog-api-key": self.api_key,
@@ -90,10 +208,79 @@ class GeminiService:
             url,
             headers=headers,
             json=payload,
-            timeout=self.timeout,
+            timeout=timeout_seconds,
         )
         response.raise_for_status()
         return response.json()
+
+    def _resolve_status_code(self, error: Exception) -> Optional[int]:
+        status = getattr(error, "status_code", None)
+        if status is None and hasattr(error, "response") and getattr(error, "response", None) is not None:
+            status = getattr(error.response, "status_code", None)
+        if status is None:
+            status = getattr(error, "code", None)
+        return status
+
+    def _call_model_with_retries(
+        self,
+        model_name: str,
+        content_text: str,
+        thinking_power: Any,
+        timeout_seconds: int,
+        max_attempts: int,
+    ) -> str:
+        attempts = max(1, int(max_attempts))
+        for attempt in range(1, attempts + 1):
+            try:
+                call_start = _timestamp()
+                logger.info(
+                    "[LLM] Request started at %s (provider=gemini, model=%s, attempt=%d/%d, thinking_power=%s, timeout=%ss)",
+                    call_start,
+                    model_name,
+                    attempt,
+                    attempts,
+                    thinking_power,
+                    timeout_seconds,
+                )
+
+                response = self._generate_content_via_rest(
+                    model_name=model_name,
+                    content_text=content_text,
+                    timeout_seconds=timeout_seconds,
+                    thinking_power=thinking_power,
+                )
+                self._last_thought_summaries = self._extract_thought_summaries(response)
+
+                call_end = _timestamp()
+                logger.info(
+                    "[LLM] Response received at %s (provider=gemini, model=%s, attempt=%d/%d)",
+                    call_end,
+                    model_name,
+                    attempt,
+                    attempts,
+                )
+                if self._last_thought_summaries:
+                    logger.info("[LLM] Thought summaries captured: %d", len(self._last_thought_summaries))
+
+                return self._extract_text(response)
+            except Exception as e:
+                status = self._resolve_status_code(e)
+                if attempt < attempts:
+                    should_retry = status in (429, 500, 502, 503, 504) or status is None
+                    if should_retry:
+                        sleep_seconds = 2
+                        logger.warning(
+                            "Gemini request failed, retrying in %ss (model=%s, attempt=%d/%d): %s",
+                            sleep_seconds,
+                            model_name,
+                            attempt,
+                            attempts,
+                            e,
+                        )
+                        time.sleep(sleep_seconds)
+                        continue
+                logger.error("Gemini API error (model=%s): %s", model_name, e)
+                raise
 
     def _extract_text(self, response: Any) -> str:
         text = response.get("text") if isinstance(response, dict) else getattr(response, "text", None)
@@ -163,58 +350,38 @@ class GeminiService:
         context: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None
     ) -> str:
-        candidate = model or self.model
+        candidate = model or self.first_model
         content_text = self._build_prompt_text(prompt, context)
         self._last_thought_summaries = []
 
-        max_attempts = self.max_attempts
-        for attempt in range(1, max_attempts + 1):
-            try:
-                call_start = _timestamp()
-                logger.info(
-                    "[LLM] Request started at %s (provider=gemini, model=%s, attempt=%d/%d)",
-                    call_start,
-                    candidate,
-                    attempt,
-                    max_attempts,
-                )
-
-                response = self._generate_content_via_rest(candidate, content_text)
-                self._last_thought_summaries = self._extract_thought_summaries(response)
-
-                call_end = _timestamp()
-                logger.info(
-                    "[LLM] Response received at %s (provider=gemini, model=%s, attempt=%d/%d)",
-                    call_end,
-                    candidate,
-                    attempt,
-                    max_attempts,
-                )
-                if self._last_thought_summaries:
-                    logger.info("[LLM] Thought summaries captured: %d", len(self._last_thought_summaries))
-
-                return self._extract_text(response)
-            except Exception as e:
-                status = getattr(e, "status_code", None)
-                if status is None and hasattr(e, "response") and getattr(e, "response", None) is not None:
-                    status = getattr(e.response, "status_code", None)
-                if status is None:
-                    status = getattr(e, "code", None)
-                if attempt < max_attempts:
-                    should_retry = status in (429, 500, 502, 503, 504) or status is None
-                    if should_retry:
-                        sleep_seconds = 2
-                        logger.warning(
-                            "Gemini request failed, retrying in %ss (attempt=%d/%d): %s",
-                            sleep_seconds,
-                            attempt,
-                            max_attempts,
-                            e,
-                        )
-                        time.sleep(sleep_seconds)
-                        continue
-                logger.error("Gemini API error (model=%s): %s", candidate, e)
+        try:
+            return self._call_model_with_retries(
+                model_name=candidate,
+                content_text=content_text,
+                thinking_power=self.first_model_thinking_power,
+                timeout_seconds=self.first_model_timeout_seconds,
+                max_attempts=self.primary_max_attempts,
+            )
+        except Exception as primary_error:
+            if not self.second_model:
                 raise
+
+            sleep_seconds = 2
+            logger.warning(
+                "[LLM] Primary model failed (model=%s). Falling back to secondary model=%s in %ss. Error=%s",
+                candidate,
+                self.second_model,
+                sleep_seconds,
+                primary_error,
+            )
+            time.sleep(sleep_seconds)
+            return self._call_model_with_retries(
+                model_name=self.second_model,
+                content_text=content_text,
+                thinking_power=self.second_model_thinking_power,
+                timeout_seconds=self.second_model_timeout_seconds,
+                max_attempts=self.second_model_max_attempts,
+            )
 
     def generate_json_content(
         self,

@@ -271,7 +271,6 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
     const {
       openOnComplete = false,
       silent = false,
-      liveTyping = false,
       forcePiiRefresh = false
     } = options;
     if (!textToUse) return null;
@@ -362,8 +361,7 @@ function ConversationScreen({ conversation, sessionId, participantId, participan
         masked_history: maskedHistory || conversationHistory,
         conversation_history: conversationHistory,
         session_id: conversationIndex + 1,
-        participant_prolific_id: participantProlificId || null,
-        live_typing: Boolean(liveTyping)
+        participant_prolific_id: participantProlificId || null
       }, { signal: riskController.signal });
 
       if (requestId !== riskRequestCounterRef.current) {

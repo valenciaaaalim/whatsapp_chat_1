@@ -389,15 +389,9 @@ def get_conversation_history_from_json(conversation_id: int) -> List[Dict[str, A
     return conversations.get(conversation_id, [])
 
 
-def _build_risk_service(live_typing: bool) -> RiskAssessmentService:
-    """Build risk service with timeout/retry policy based on request type."""
-    timeout_seconds = settings.GEMINI_TIMEOUT_SECONDS
-    max_attempts = settings.GEMINI_MAX_ATTEMPTS
-    if live_typing:
-        timeout_seconds = settings.GEMINI_LIVE_TIMEOUT_SECONDS
-        max_attempts = settings.GEMINI_LIVE_MAX_ATTEMPTS
-
-    llm = GeminiService(timeout_seconds=timeout_seconds, max_attempts=max_attempts)
+def _build_risk_service() -> RiskAssessmentService:
+    """Build risk service with timeout/retry policy."""
+    llm = GeminiService()
     return RiskAssessmentService(llm)
 
 
@@ -490,15 +484,13 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
     masked_history_input = request.get("masked_history")
     session_id = request.get("session_id", 1)  # Scenario number (1, 2, or 3)
     participant_prolific_id = request.get("participant_prolific_id")
-    live_typing = bool(request.get("live_typing"))
-    risk_service = _build_risk_service(live_typing=live_typing)
+    risk_service = _build_risk_service()
     scenario_id = _resolve_scenario_id(request)
     
     logger.info(
-        "[RISK] Processing assessment (session_id=%s, draft_len=%d, live_typing=%s)",
+        "[RISK] Processing assessment (session_id=%s, draft_len=%d)",
         session_id,
         len(draft_text),
-        live_typing,
     )
     
     # Map session_id to conversation_id (1000, 1001, 1002)

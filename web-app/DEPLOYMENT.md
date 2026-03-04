@@ -60,7 +60,7 @@ gcloud run deploy $SERVICE_NAME \
   --timeout 300 \
   --max-instances 10 \
   --min-instances 0 \
-  --set-env-vars "GEMINI_API_KEY=your_api_key,DATABASE_URL=sqlite:///tmp/web_app.db,FRONTEND_URL=https://your-domain.com"
+  --set-env-vars "GEMINI_API_KEY=your_api_key,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=sqlite:///tmp/web_app.db,FRONTEND_URL=https://your-domain.com"
 ```
 
 ### 5. Get Cloud Run URL
@@ -150,12 +150,20 @@ Set these in Cloud Run:
 
 ```bash
 gcloud run services update $SERVICE_NAME \
-  --update-env-vars "GEMINI_API_KEY=xxx,DATABASE_URL=postgresql://...,FRONTEND_URL=https://your-domain.com,SESSION_COOKIE_SECURE=true"
+  --update-env-vars "GEMINI_API_KEY=xxx,GEMINI_FIRST_MODEL=gemini-3-flash-preview,FIRST_MODEL_THINKING_POWER=medium,GEMINI_SECOND_MODEL=gemini-2.5-flash,SECOND_MODEL_THINKING_POWER=-1,FIRST_MODEL_TIMEOUT_SECONDS=20,FIRST_MODEL_MAX_ATTEMPTS=1,SECOND_MODEL_TIMEOUT_SECONDS=20,SECOND_MODEL_MAX_ATTEMPTS=1,DATABASE_URL=postgresql://...,FRONTEND_URL=https://your-domain.com,SESSION_COOKIE_SECURE=true"
 ```
 
 ### Required Variables
 
 - `GEMINI_API_KEY`: Your Google Gemini API key
+- `GEMINI_FIRST_MODEL`: Primary Gemini model ID (for example `gemini-3-flash-preview`)
+- `FIRST_MODEL_THINKING_POWER`: Primary thinking power (`-1`, `0`, integers, or words like `low|medium|high|dynamic`)
+- `FIRST_MODEL_TIMEOUT_SECONDS`: Primary timeout for normal (submit) requests
+- `FIRST_MODEL_MAX_ATTEMPTS`: Primary max attempts before trying fallback model
+- `GEMINI_SECOND_MODEL`: Secondary fallback model ID (for example `gemini-2.5-flash`)
+- `SECOND_MODEL_THINKING_POWER`: Secondary thinking power (`-1`, `0`, integers, or words like `low|medium|high|dynamic`)
+- `SECOND_MODEL_TIMEOUT_SECONDS`: Secondary timeout for normal (submit) fallback calls
+- `SECOND_MODEL_MAX_ATTEMPTS`: Secondary max attempts
 - `DATABASE_URL`: PostgreSQL connection string (for production) or SQLite path
 - `FRONTEND_URL`: Your frontend URL for CORS
 - `SESSION_COOKIE_SECURE`: Set to `true` in production
@@ -297,4 +305,3 @@ gcloud run services describe $SERVICE_NAME --region $REGION
 - Enable Cloud CDN for static assets
 - Use Cloudflare caching for API responses where appropriate
 - Monitor usage with Cloud Monitoring
-

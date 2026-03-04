@@ -40,11 +40,14 @@ This is a web application for user testing of the WhatsApp risk assessment syste
    Create a `.env` file:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-3-flash-preview
-   GEMINI_TIMEOUT_SECONDS=15
-   GEMINI_MAX_ATTEMPTS=2
-   GEMINI_LIVE_TIMEOUT_SECONDS=8
-   GEMINI_LIVE_MAX_ATTEMPTS=1
+   GEMINI_FIRST_MODEL=gemini-3-flash-preview
+   FIRST_MODEL_THINKING_POWER=medium
+   GEMINI_SECOND_MODEL=gemini-2.5-flash
+   SECOND_MODEL_THINKING_POWER=-1
+   FIRST_MODEL_TIMEOUT_SECONDS=20
+   FIRST_MODEL_MAX_ATTEMPTS=1
+   SECOND_MODEL_TIMEOUT_SECONDS=20
+   SECOND_MODEL_MAX_ATTEMPTS=1
    DATABASE_URL=sqlite:///./web_app.db
    FRONTEND_URL=http://localhost:3000
    ```
@@ -101,11 +104,14 @@ The frontend will be available at `http://localhost:3000`.
    Create a `.env` file in the `web-app` directory:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-3-flash-preview
-   GEMINI_TIMEOUT_SECONDS=15
-   GEMINI_MAX_ATTEMPTS=2
-   GEMINI_LIVE_TIMEOUT_SECONDS=8
-   GEMINI_LIVE_MAX_ATTEMPTS=1
+   GEMINI_FIRST_MODEL=gemini-3-flash-preview
+   FIRST_MODEL_THINKING_POWER=medium
+   GEMINI_SECOND_MODEL=gemini-2.5-flash
+   SECOND_MODEL_THINKING_POWER=-1
+   FIRST_MODEL_TIMEOUT_SECONDS=20
+   FIRST_MODEL_MAX_ATTEMPTS=1
+   SECOND_MODEL_TIMEOUT_SECONDS=20
+   SECOND_MODEL_MAX_ATTEMPTS=1
    ```
 
 3. **Start services in detached mode (runs in background):**

@@ -48,15 +48,43 @@ class Settings:
     # If both are set, prefer GOOGLE_API_KEY.
     GOOGLE_API_KEY: Optional[str] = _clean_env(os.getenv("GOOGLE_API_KEY"))
     GEMINI_API_KEY: Optional[str] = _clean_env(os.getenv("GEMINI_API_KEY"))
-    GEMINI_MODEL: str = (
-        _clean_env(os.getenv("GEMINI_MODEL"))
-        or "gemini-3-flash-preview"
+    # Legacy alias retained for backwards compatibility.
+    GEMINI_MODEL: Optional[str] = _clean_env(os.getenv("GEMINI_MODEL"))
+    GEMINI_FIRST_MODEL: Optional[str] = (
+        _clean_env(os.getenv("GEMINI_FIRST_MODEL"))
+        or GEMINI_MODEL
     )
-    GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "20"))
-    GEMINI_MAX_ATTEMPTS: int = int(os.getenv("GEMINI_MAX_ATTEMPTS", "2"))
-    GEMINI_LIVE_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_LIVE_TIMEOUT_SECONDS", "20"))
-    GEMINI_LIVE_MAX_ATTEMPTS: int = int(os.getenv("GEMINI_LIVE_MAX_ATTEMPTS", "2"))
-    GEMINI_THINKING_BUDGET: int = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
+    GEMINI_SECOND_MODEL: Optional[str] = _clean_env(os.getenv("GEMINI_SECOND_MODEL"))
+    FIRST_MODEL_THINKING_POWER: str = (
+        _clean_env(os.getenv("FIRST_MODEL_THINKING_POWER"))
+        or _clean_env(os.getenv("GEMINI_THINKING_BUDGET"))
+        or "-1"
+    )
+    SECOND_MODEL_THINKING_POWER: str = (
+        _clean_env(os.getenv("SECOND_MODEL_THINKING_POWER"))
+        or "-1"
+    )
+    FIRST_MODEL_TIMEOUT_SECONDS: int = int(
+        _clean_env(os.getenv("FIRST_MODEL_TIMEOUT_SECONDS"))
+        or _clean_env(os.getenv("GEMINI_TIMEOUT_SECONDS"))
+        or "20"
+    )
+    FIRST_MODEL_MAX_ATTEMPTS: int = int(
+        _clean_env(os.getenv("FIRST_MODEL_MAX_ATTEMPTS"))
+        or _clean_env(os.getenv("GEMINI_MAX_ATTEMPTS"))
+        or "1"
+    )
+    GEMINI_MAX_ATTEMPTS: int = FIRST_MODEL_MAX_ATTEMPTS
+    SECOND_MODEL_TIMEOUT_SECONDS: int = int(
+        _clean_env(os.getenv("SECOND_MODEL_TIMEOUT_SECONDS"))
+        or _clean_env(os.getenv("GEMINI_SECOND_MODEL_TIMEOUT_SECONDS"))
+        or "20"
+    )
+    SECOND_MODEL_MAX_ATTEMPTS: int = int(
+        _clean_env(os.getenv("SECOND_MODEL_MAX_ATTEMPTS"))
+        or "1"
+    )
+    GEMINI_THINKING_BUDGET: str = _clean_env(os.getenv("GEMINI_THINKING_BUDGET")) or "-1"
     GEMINI_INCLUDE_THOUGHTS: bool = _env_bool("GEMINI_INCLUDE_THOUGHTS", True)
     
     # Security
