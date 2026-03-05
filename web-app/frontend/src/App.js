@@ -80,20 +80,20 @@ const resolveProlificId = () => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function AnimatedLoading({ message }) {
-  const [dots, setDots] = useState('.');
+function AnimatedLoading() {
+  const [loadingText, setLoadingText] = useState('Loading');
 
   useEffect(() => {
-    const frames = ['.', '..', '...'];
+    const frames = ['Loading', 'Loading.', 'Loading..', 'Loading...'];
     let index = 0;
     const interval = setInterval(() => {
       index = (index + 1) % frames.length;
-      setDots(frames[index]);
+      setLoadingText(frames[index]);
     }, 450);
     return () => clearInterval(interval);
   }, []);
 
-  return <div className="loading">{message}{dots}</div>;
+  return <div className="loading">{loadingText}</div>;
 }
 
 // Component to handle conversation route with index parameter
@@ -307,7 +307,7 @@ function App() {
     setInitialPiiDelayDone(false);
     const timer = setTimeout(() => {
       setInitialPiiDelayDone(true);
-    }, 10000);
+    }, 6000);
 
     return () => clearTimeout(timer);
   }, [variant, isAdminRoute]);
@@ -344,7 +344,7 @@ function App() {
   }
 
   if (variant === 'A' && !initialPiiDelayDone) {
-    return <AnimatedLoading message="Loading privacy model" />;
+    return <AnimatedLoading />;
   }
 
   return (

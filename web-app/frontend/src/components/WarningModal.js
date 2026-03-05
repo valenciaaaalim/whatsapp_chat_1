@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import './WarningModal.css';
 
 function WarningModal({ warningState, riskPending, onAcceptRewrite, onContinueAnyway }) {
-  const [loadingDots, setLoadingDots] = useState('.');
+  const [loadingText, setLoadingText] = useState('Loading');
   const rewriteText = warningState?.saferRewrite || '';
   const reasoning = warningState?.reasoning || '';
   const riskLevel = warningState?.riskLevel || 'UNKNOWN';
@@ -10,15 +10,16 @@ function WarningModal({ warningState, riskPending, onAcceptRewrite, onContinueAn
 
   useEffect(() => {
     if (!riskPending) {
-      setLoadingDots('.');
+      setLoadingText('Loading');
       return undefined;
     }
-    const frames = ['.', '..', '...'];
+    const frames = ['Loading', 'Loading.', 'Loading..', 'Loading...'];
     let index = 0;
+    setLoadingText(frames[0]);
     const timer = setInterval(() => {
       index = (index + 1) % frames.length;
-      setLoadingDots(frames[index]);
-    }, 350);
+      setLoadingText(frames[index]);
+    }, 450);
     return () => clearInterval(timer);
   }, [riskPending]);
 
@@ -27,7 +28,7 @@ function WarningModal({ warningState, riskPending, onAcceptRewrite, onContinueAn
       <div className="warning-modal">
         <div className="warning-content">
           {riskPending ? (
-            <div className="warning-explanation">Loading analysis{loadingDots}</div>
+            <div className="warning-explanation">{loadingText}</div>
           ) : (
             <>
               <div className="risk-block">

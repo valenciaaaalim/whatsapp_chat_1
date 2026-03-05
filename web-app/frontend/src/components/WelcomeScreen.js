@@ -10,7 +10,7 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   const [waitingForPiiModel, setWaitingForPiiModel] = useState(false);
-  const [loadingDots, setLoadingDots] = useState('.');
+  const [loadingText, setLoadingText] = useState('Loading');
   const [hasReachedBottom, setHasReachedBottom] = useState(false);
   const scrollContainerRef = useRef(null);
 
@@ -45,12 +45,12 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
     if (!waitingForPiiModel) {
       return undefined;
     }
-    const frames = ['.', '..', '...'];
+    const frames = ['Loading', 'Loading.', 'Loading..', 'Loading...'];
     let index = 0;
-    setLoadingDots(frames[0]);
+    setLoadingText(frames[0]);
     const interval = setInterval(() => {
       index = (index + 1) % frames.length;
-      setLoadingDots(frames[index]);
+      setLoadingText(frames[index]);
     }, 450);
     return () => clearInterval(interval);
   }, [waitingForPiiModel]);
@@ -75,7 +75,7 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
   };
 
   if (waitingForPiiModel) {
-    return <div className="loading">Loading privacy model{loadingDots}</div>;
+    return <div className="loading">{loadingText}</div>;
   }
 
   return (
