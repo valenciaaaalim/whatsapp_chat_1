@@ -7,7 +7,7 @@ import json
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from app.database import get_db
 from app.models import (
     Participant,
@@ -20,6 +20,9 @@ from app.models import (
 from app.schemas import (
     BaselineAssessmentCreate,
     BaselineAssessmentResponse,
+    AlertInteractionStartRequest,
+    AlertInteractionCompleteRequest,
+    AlertInteractionDecisionRequest,
     ScenarioResponseCreate,
     ScenarioResponseSchema,
     ScenarioMessageRecord,
@@ -42,6 +45,17 @@ from app.participant_state import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/participants", tags=["participant-data"])
+
+MARKER_ABORT = "[ABORT]"
+MARKER_DNI = "[DNI]"
+MARKER_FALSE = "[FALSE]"
+MARKER_TRUE = "[TRUE]"
+MARKER_B = "[B]"
+STATUS_PENDING = "[PENDING]"
+STATUS_COMPLETE = "[COMPLETE]"
+STATUS_ABORT = "[ABORT]"
+STATUS_DNI = "[DNI]"
+STATUS_B = "[B]"
 
 
 def calculate_sus_score(sus_1, sus_2, sus_3, sus_4, sus_5, sus_6, sus_7, sus_8, sus_9, sus_10):
@@ -93,10 +107,10 @@ def _normalize_accepted_rewrite(value: Any, variant: str | None) -> str | None:
     """
     Normalize accepted_rewrite for storage:
     - Variant B => "[B]"
-    - Variant A => "true" | "false" | null
+    - Variant A => "true" | "false" | "[ABORT]" | "[DNI]" | null
     """
     if _is_variant_b(variant):
-        return "[B]"
+        return MARKER_B
     if value is None:
         return None
     if isinstance(value, bool):
@@ -108,7 +122,13 @@ def _normalize_accepted_rewrite(value: Any, variant: str | None) -> str | None:
         if normalized == "false":
             return "false"
         if normalized == "abort":
-            return "ABORT"
+            return MARKER_ABORT
+        if normalized == "[abort]":
+            return MARKER_ABORT
+        if normalized == "dni":
+            return MARKER_DNI
+        if normalized == "[dni]":
+            return MARKER_DNI
         if normalized in {"", "null", "none"}:
             return None
     return None
@@ -117,8 +137,135 @@ def _normalize_accepted_rewrite(value: Any, variant: str | None) -> str | None:
 def _variant_a_only_value(value: Any, variant: str | None) -> Any:
     """Set Variant A-only fields to [B] for variant B participants."""
     if _is_variant_b(variant):
-        return "[B]"
+        return MARKER_B
     return value
+
+
+def _normalize_string_field(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_token_field(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text in {MARKER_ABORT, MARKER_DNI, MARKER_B}:
+        return 0
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _final_message_is_actual(value: Any) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    return text not in {"", MARKER_ABORT, MARKER_DNI, MARKER_FALSE}
+
+
+def _next_alert_round(db: Session, participant_id: int, scenario_number: int) -> int:
+    current_max = db.query(func.max(ScenarioResponse.alert_round)).filter(
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.scenario_number == scenario_number,
+        ScenarioResponse.alert_round.isnot(None),
+    ).scalar()
+    current_max = int(current_max or 0)
+    return max(current_max + 1, 1)
+
+
+def _resolve_scenario_llm_usage(
+    db: Session,
+    participant_id: int,
+    scenario_number: int,
+    output_id: str | None,
+) -> str | None:
+    from app.models import LLMOutput
+
+    if output_id:
+        match = db.query(LLMOutput.nth_call).filter(
+            LLMOutput.participant_id == participant_id,
+            LLMOutput.scenario_id == scenario_number,
+            LLMOutput.output_id == output_id,
+        ).order_by(LLMOutput.id.desc()).first()
+        if match and match[0] is not None:
+            return str(match[0])
+
+    fallback = db.query(func.max(LLMOutput.nth_call)).filter(
+        LLMOutput.participant_id == participant_id,
+        LLMOutput.scenario_id == scenario_number,
+    ).scalar()
+    if fallback is None:
+        return None
+    return str(fallback)
+
+
+def _mark_prior_complete_rows_false(
+    db: Session,
+    participant_id: int,
+    scenario_number: int,
+) -> None:
+    db.query(ScenarioResponse).filter(
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.scenario_number == scenario_number,
+        ScenarioResponse.interaction_status == STATUS_COMPLETE,
+        ScenarioResponse.is_final_submission_row != MARKER_TRUE,
+        ScenarioResponse.final_message.is_(None),
+    ).update(
+        {
+            ScenarioResponse.final_message: MARKER_FALSE,
+            ScenarioResponse.is_final_submission_row: MARKER_FALSE,
+        },
+        synchronize_session=False,
+    )
+
+
+def _set_variant_a_marker_fields(row: ScenarioResponse, marker: str) -> None:
+    row.original_input = marker
+    row.masked_text = marker
+    row.output_id = marker
+    row.input_tokens = 0
+    row.total_tokens = 0
+    row.model = marker
+    row.scenario_llm_usage = marker
+    row.risk_level = marker
+    row.reasoning = marker
+    row.suggested_rewrite = marker
+    row.primary_risk_factors = marker
+    row.linkability_risk_level = marker
+    row.linkability_risk_explanation = marker
+    row.authentication_baiting_level = marker
+    row.authentication_baiting_explanation = marker
+    row.contextual_alignment_level = marker
+    row.contextual_alignment_explanation = marker
+    row.platform_trust_obligation_level = marker
+    row.platform_trust_obligation_explanation = marker
+    row.psychological_pressure_level = marker
+    row.psychological_pressure_explanation = marker
+    row.accepted_rewrite = marker
+
+
+def _latest_scenario_response(
+    db: Session,
+    participant_id: int,
+    scenario_number: int,
+) -> ScenarioResponse | None:
+    return db.query(ScenarioResponse).filter(
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.scenario_number == scenario_number,
+    ).order_by(
+        ScenarioResponse.alert_round.desc().nullslast(),
+        ScenarioResponse.id.desc(),
+    ).first()
 
 
 def build_participant_data_response(db: Session, participant: Participant) -> ParticipantDataResponse:
@@ -130,7 +277,11 @@ def build_participant_data_response(db: Session, participant: Participant) -> Pa
     
     scenario_responses = db.query(ScenarioResponse).filter(
         ScenarioResponse.participant_id == participant_id
-    ).order_by(ScenarioResponse.scenario_number).all()
+    ).order_by(
+        ScenarioResponse.scenario_number,
+        ScenarioResponse.alert_round,
+        ScenarioResponse.id,
+    ).all()
     
     post_scenario_surveys = db.query(PostScenarioSurvey).filter(
         PostScenarioSurvey.participant_id == participant_id
@@ -167,13 +318,14 @@ def build_participant_progress_response(db: Session, participant: Participant) -
 
     scenario_rows = db.query(
         ScenarioResponse.scenario_number,
-        ScenarioResponse.final_message
+        ScenarioResponse.final_message,
+        ScenarioResponse.is_final_submission_row,
     ).filter(
         ScenarioResponse.participant_id == participant_id
     ).all()
     scenario_final_submitted = {
         int(row[0]) for row in scenario_rows
-        if row[1] is not None and str(row[1]).strip() != ""
+        if row[2] == MARKER_TRUE and _final_message_is_actual(row[1])
     }
 
     post_scenario_numbers = {
@@ -280,131 +432,249 @@ def create_baseline_assessment(
 # =============================================================================
 # Scenario Response endpoints (Table 3)
 # =============================================================================
+@router.post("/{participant_id}/alert-interactions/start", response_model=ScenarioResponseSchema)
+def start_alert_interaction(
+    participant_id: int,
+    data: AlertInteractionStartRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new Variant A interaction-log row for an alert button click."""
+    participant = get_participant_by_id(db, participant_id)
+    participant = sync_participant_completion_state(db, participant, mark_active=True)
+    if _is_variant_b(participant.variant):
+        raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
+
+    scenario_number = data.scenario_number
+    progress = build_participant_progress_response(db, participant)
+    expected_path = f"/conversation/{scenario_number - 1}"
+    if progress.redirect_path != expected_path:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
+
+    if db.query(PostScenarioSurvey.id).filter(
+        PostScenarioSurvey.participant_id == participant_id,
+        PostScenarioSurvey.scenario_number == scenario_number,
+    ).first():
+        raise HTTPException(status_code=409, detail="Scenario already completed")
+
+    _mark_prior_complete_rows_false(db, participant_id, scenario_number)
+
+    row = ScenarioResponse(
+        participant_id=participant_id,
+        scenario_number=scenario_number,
+        alert_round=_next_alert_round(db, participant_id, scenario_number),
+        interaction_status=STATUS_PENDING,
+        is_final_submission_row=MARKER_FALSE,
+        participant_variant=participant.variant,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.post("/{participant_id}/alert-interactions/{scenario_response_id}/complete", response_model=ScenarioResponseSchema)
+def complete_alert_interaction(
+    participant_id: int,
+    scenario_response_id: int,
+    data: AlertInteractionCompleteRequest,
+    db: Session = Depends(get_db)
+):
+    """Persist the completed assessment output for a Variant A alert interaction row."""
+    participant = get_participant_by_id(db, participant_id)
+    participant = sync_participant_completion_state(db, participant, mark_active=True)
+    if _is_variant_b(participant.variant):
+        raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
+    progress = build_participant_progress_response(db, participant)
+    expected_path = f"/conversation/{data.scenario_number - 1}"
+    if progress.redirect_path != expected_path:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
+
+    row = db.query(ScenarioResponse).filter(
+        ScenarioResponse.id == scenario_response_id,
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.scenario_number == data.scenario_number,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scenario interaction not found")
+    if row.interaction_status == STATUS_ABORT:
+        raise HTTPException(status_code=409, detail="Scenario interaction already aborted")
+    if row.is_final_submission_row == MARKER_TRUE:
+        raise HTTPException(status_code=409, detail="Scenario interaction already finalized")
+
+    output_id_value = _normalize_string_field(data.output_id)
+    row.interaction_status = STATUS_COMPLETE
+    row.is_final_submission_row = MARKER_FALSE
+    row.original_input = data.original_input
+    row.masked_text = data.masked_text
+    row.output_id = output_id_value
+    row.input_tokens = _normalize_token_field(data.input_tokens)
+    row.total_tokens = _normalize_token_field(data.total_tokens)
+    row.model = _normalize_string_field(data.model)
+    row.scenario_llm_usage = _resolve_scenario_llm_usage(
+        db,
+        participant_id=participant_id,
+        scenario_number=data.scenario_number,
+        output_id=output_id_value,
+    )
+    row.risk_level = data.risk_level
+    row.reasoning = data.reasoning
+    row.suggested_rewrite = data.suggested_rewrite
+    row.primary_risk_factors = (
+        json.dumps(data.primary_risk_factors, ensure_ascii=True)
+        if data.primary_risk_factors is not None else None
+    )
+    row.linkability_risk_level = data.linkability_risk_level
+    row.linkability_risk_explanation = data.linkability_risk_explanation
+    row.authentication_baiting_level = data.authentication_baiting_level
+    row.authentication_baiting_explanation = data.authentication_baiting_explanation
+    row.contextual_alignment_level = data.contextual_alignment_level
+    row.contextual_alignment_explanation = data.contextual_alignment_explanation
+    row.platform_trust_obligation_level = data.platform_trust_obligation_level
+    row.platform_trust_obligation_explanation = data.platform_trust_obligation_explanation
+    row.psychological_pressure_level = data.psychological_pressure_level
+    row.psychological_pressure_explanation = data.psychological_pressure_explanation
+    row.completed_at = get_singapore_time()
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.post("/{participant_id}/alert-interactions/{scenario_response_id}/decision", response_model=ScenarioResponseSchema)
+def record_alert_interaction_decision(
+    participant_id: int,
+    scenario_response_id: int,
+    data: AlertInteractionDecisionRequest,
+    db: Session = Depends(get_db)
+):
+    """Persist the explicit modal choice for a Variant A alert interaction row."""
+    participant = get_participant_by_id(db, participant_id)
+    participant = sync_participant_completion_state(db, participant, mark_active=True)
+    if _is_variant_b(participant.variant):
+        raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
+
+    row = db.query(ScenarioResponse).filter(
+        ScenarioResponse.id == scenario_response_id,
+        ScenarioResponse.participant_id == participant_id,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scenario interaction not found")
+    if row.interaction_status != STATUS_COMPLETE:
+        raise HTTPException(status_code=409, detail="Scenario interaction is not ready for a decision")
+    progress = build_participant_progress_response(db, participant)
+    expected_path = f"/conversation/{row.scenario_number - 1}"
+    if progress.redirect_path != expected_path:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
+        )
+
+    accepted_rewrite_value = _normalize_accepted_rewrite(data.accepted_rewrite, participant.variant)
+    if accepted_rewrite_value not in {"true", "false", None}:
+        raise HTTPException(status_code=400, detail="Invalid rewrite decision")
+
+    row.accepted_rewrite = accepted_rewrite_value
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 @router.post("/{participant_id}/scenario-response", response_model=ScenarioResponseSchema)
 def create_or_update_scenario_response(
     participant_id: int,
     data: ScenarioResponseCreate,
     db: Session = Depends(get_db)
 ):
-    """Create or update scenario response for a participant."""
+    """Legacy endpoint retained for compatibility with manual/admin usage."""
     participant = get_participant_by_id(db, participant_id)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
-    
-    # Check if scenario response already exists
-    existing = db.query(ScenarioResponse).filter(
-        and_(
-            ScenarioResponse.participant_id == participant_id,
-            ScenarioResponse.scenario_number == data.scenario_number
-        )
-    ).first()
-    
-    accepted_rewrite_value = _normalize_accepted_rewrite(data.accepted_rewrite, participant.variant)
-    variant_b = _is_variant_b(participant.variant)
-    original_input_value = _variant_a_only_value(data.original_input, participant.variant)
-    masked_text_value = _variant_a_only_value(data.masked_text, participant.variant)
-    output_id_value = _variant_a_only_value(data.output_id, participant.variant)
-    total_tokens_value = None if variant_b else data.total_tokens
-    input_tokens_value = None if variant_b else data.input_tokens
-    model_value = _variant_a_only_value(data.model, participant.variant)
-    suggested_rewrite_value = _variant_a_only_value(data.suggested_rewrite, participant.variant)
-    risk_level_value = "[B]" if variant_b else data.risk_level
-    reasoning_value = "[B]" if variant_b else data.reasoning
-    primary_risk_factors_value = "[B]" if variant_b else data.primary_risk_factors
-    linkability_risk_level_value = "[B]" if variant_b else data.linkability_risk_level
-    linkability_risk_explanation_value = "[B]" if variant_b else data.linkability_risk_explanation
-    authentication_baiting_level_value = "[B]" if variant_b else data.authentication_baiting_level
-    authentication_baiting_explanation_value = "[B]" if variant_b else data.authentication_baiting_explanation
-    contextual_alignment_level_value = "[B]" if variant_b else data.contextual_alignment_level
-    contextual_alignment_explanation_value = "[B]" if variant_b else data.contextual_alignment_explanation
-    platform_trust_obligation_level_value = "[B]" if variant_b else data.platform_trust_obligation_level
-    platform_trust_obligation_explanation_value = "[B]" if variant_b else data.platform_trust_obligation_explanation
-    psychological_pressure_level_value = "[B]" if variant_b else data.psychological_pressure_level
-    psychological_pressure_explanation_value = "[B]" if variant_b else data.psychological_pressure_explanation
 
-    if existing:
-        # Update existing record
-        if existing.participant_variant is None:
-            existing.participant_variant = participant.variant
-        if original_input_value is not None:
-            existing.original_input = original_input_value
-        if masked_text_value is not None:
-            existing.masked_text = masked_text_value
-        if output_id_value is not None:
-            existing.output_id = output_id_value
-        if total_tokens_value is not None:
-            existing.total_tokens = total_tokens_value
-        if input_tokens_value is not None:
-            existing.input_tokens = input_tokens_value
-        if model_value is not None:
-            existing.model = model_value
-        if suggested_rewrite_value is not None:
-            existing.suggested_rewrite = suggested_rewrite_value
-        if reasoning_value is not None:
-            existing.reasoning = reasoning_value
-        if risk_level_value is not None:
-            existing.risk_level = risk_level_value
-        if primary_risk_factors_value is not None:
-            existing.primary_risk_factors = primary_risk_factors_value
-        if linkability_risk_level_value is not None:
-            existing.linkability_risk_level = linkability_risk_level_value
-        if linkability_risk_explanation_value is not None:
-            existing.linkability_risk_explanation = linkability_risk_explanation_value
-        if authentication_baiting_level_value is not None:
-            existing.authentication_baiting_level = authentication_baiting_level_value
-        if authentication_baiting_explanation_value is not None:
-            existing.authentication_baiting_explanation = authentication_baiting_explanation_value
-        if contextual_alignment_level_value is not None:
-            existing.contextual_alignment_level = contextual_alignment_level_value
-        if contextual_alignment_explanation_value is not None:
-            existing.contextual_alignment_explanation = contextual_alignment_explanation_value
-        if platform_trust_obligation_level_value is not None:
-            existing.platform_trust_obligation_level = platform_trust_obligation_level_value
-        if platform_trust_obligation_explanation_value is not None:
-            existing.platform_trust_obligation_explanation = platform_trust_obligation_explanation_value
-        if psychological_pressure_level_value is not None:
-            existing.psychological_pressure_level = psychological_pressure_level_value
-        if psychological_pressure_explanation_value is not None:
-            existing.psychological_pressure_explanation = psychological_pressure_explanation_value
-        if data.final_message is not None:
-            existing.final_message = data.final_message
-        if accepted_rewrite_value is not None:
-            existing.accepted_rewrite = accepted_rewrite_value
+    if _is_variant_b(participant.variant):
+        existing = db.query(ScenarioResponse).filter(
+            ScenarioResponse.participant_id == participant_id,
+            ScenarioResponse.scenario_number == data.scenario_number,
+            ScenarioResponse.is_final_submission_row == MARKER_TRUE,
+        ).first()
+        if existing is None:
+            existing = ScenarioResponse(
+                participant_id=participant_id,
+                scenario_number=data.scenario_number,
+                interaction_status=STATUS_B,
+                is_final_submission_row=MARKER_TRUE,
+                scenario_llm_usage=MARKER_B,
+                participant_variant=participant.variant,
+            )
+            db.add(existing)
+        existing.original_input = MARKER_B
+        existing.masked_text = MARKER_B
+        existing.output_id = MARKER_B
+        existing.input_tokens = 0
+        existing.total_tokens = 0
+        existing.model = MARKER_B
+        existing.scenario_llm_usage = MARKER_B
+        existing.risk_level = MARKER_B
+        existing.reasoning = MARKER_B
+        existing.suggested_rewrite = MARKER_B
+        existing.primary_risk_factors = MARKER_B
+        existing.linkability_risk_level = MARKER_B
+        existing.linkability_risk_explanation = MARKER_B
+        existing.authentication_baiting_level = MARKER_B
+        existing.authentication_baiting_explanation = MARKER_B
+        existing.contextual_alignment_level = MARKER_B
+        existing.contextual_alignment_explanation = MARKER_B
+        existing.platform_trust_obligation_level = MARKER_B
+        existing.platform_trust_obligation_explanation = MARKER_B
+        existing.psychological_pressure_level = MARKER_B
+        existing.psychological_pressure_explanation = MARKER_B
+        existing.accepted_rewrite = MARKER_B
+        existing.final_message = data.final_message
+        existing.completed_at = get_singapore_time()
         db.commit()
         db.refresh(existing)
         return existing
-    else:
-        # Create new record
-        scenario_response = ScenarioResponse(
-            participant_id=participant_id,
-            scenario_number=data.scenario_number,
-            original_input=original_input_value,
-            masked_text=masked_text_value,
-            output_id=output_id_value,
-            total_tokens=total_tokens_value,
-            input_tokens=input_tokens_value,
-            model=model_value,
-            suggested_rewrite=suggested_rewrite_value,
-            reasoning=reasoning_value,
-            risk_level=risk_level_value,
-            primary_risk_factors=primary_risk_factors_value,
-            linkability_risk_level=linkability_risk_level_value,
-            linkability_risk_explanation=linkability_risk_explanation_value,
-            authentication_baiting_level=authentication_baiting_level_value,
-            authentication_baiting_explanation=authentication_baiting_explanation_value,
-            contextual_alignment_level=contextual_alignment_level_value,
-            contextual_alignment_explanation=contextual_alignment_explanation_value,
-            platform_trust_obligation_level=platform_trust_obligation_level_value,
-            platform_trust_obligation_explanation=platform_trust_obligation_explanation_value,
-            psychological_pressure_level=psychological_pressure_level_value,
-            psychological_pressure_explanation=psychological_pressure_explanation_value,
-            final_message=data.final_message,
-            accepted_rewrite=accepted_rewrite_value,
-            participant_variant=participant.variant,
-        )
-        db.add(scenario_response)
-        db.commit()
-        db.refresh(scenario_response)
-        return scenario_response
+
+    row = ScenarioResponse(
+        participant_id=participant_id,
+        scenario_number=data.scenario_number,
+        alert_round=data.alert_round or _next_alert_round(db, participant_id, data.scenario_number),
+        interaction_status=data.interaction_status or STATUS_COMPLETE,
+        is_final_submission_row=data.is_final_submission_row or MARKER_FALSE,
+        original_input=data.original_input,
+        masked_text=data.masked_text,
+        output_id=_normalize_string_field(data.output_id),
+        input_tokens=_normalize_token_field(data.input_tokens),
+        total_tokens=_normalize_token_field(data.total_tokens),
+        model=_normalize_string_field(data.model),
+        scenario_llm_usage=_normalize_string_field(data.scenario_llm_usage),
+        risk_level=data.risk_level,
+        reasoning=data.reasoning,
+        suggested_rewrite=data.suggested_rewrite,
+        primary_risk_factors=data.primary_risk_factors,
+        linkability_risk_level=data.linkability_risk_level,
+        linkability_risk_explanation=data.linkability_risk_explanation,
+        authentication_baiting_level=data.authentication_baiting_level,
+        authentication_baiting_explanation=data.authentication_baiting_explanation,
+        contextual_alignment_level=data.contextual_alignment_level,
+        contextual_alignment_explanation=data.contextual_alignment_explanation,
+        platform_trust_obligation_level=data.platform_trust_obligation_level,
+        platform_trust_obligation_explanation=data.platform_trust_obligation_explanation,
+        psychological_pressure_level=data.psychological_pressure_level,
+        psychological_pressure_explanation=data.psychological_pressure_explanation,
+        final_message=data.final_message,
+        accepted_rewrite=_normalize_accepted_rewrite(data.accepted_rewrite, participant.variant),
+        completed_at=get_singapore_time() if data.final_message else None,
+        participant_variant=participant.variant,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.post("/message")
@@ -419,8 +689,11 @@ def record_scenario_message(
     if data.conversation_index not in (0, 1, 2):
         raise HTTPException(status_code=400, detail="Invalid conversation index")
     
-    # Get participant by prolific_id
-    participant = get_participant_by_prolific_id(db, data.participant_id)
+    # Frontend currently sends prolific_id; accept numeric participant ids for manual/admin use.
+    if isinstance(data.participant_id, int):
+        participant = get_participant_by_id(db, data.participant_id)
+    else:
+        participant = get_participant_by_prolific_id(db, str(data.participant_id))
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     
     scenario_number = data.conversation_index + 1  # Convert 0-indexed to 1-indexed
@@ -444,131 +717,79 @@ def record_scenario_message(
     if scenario_survey_exists:
         raise HTTPException(status_code=409, detail="Scenario already completed")
     
-    # Check if scenario response already exists
-    existing = db.query(ScenarioResponse).filter(
-        and_(
-            ScenarioResponse.participant_id == participant.id,
-            ScenarioResponse.scenario_number == scenario_number
-        )
-    ).first()
-
-    if existing and existing.final_message and existing.final_message.strip():
+    existing_final = db.query(ScenarioResponse).filter(
+        ScenarioResponse.participant_id == participant.id,
+        ScenarioResponse.scenario_number == scenario_number,
+        ScenarioResponse.is_final_submission_row == MARKER_TRUE,
+    ).all()
+    if any(_final_message_is_actual(row.final_message) for row in existing_final):
         raise HTTPException(status_code=409, detail="Scenario message already submitted")
 
     completion_time = get_singapore_time()
     participant_variant = participant.variant
     variant_b = _is_variant_b(participant_variant)
-    scenario_model = _variant_a_only_value(data.model, participant_variant)
-    accepted_rewrite_value = _normalize_accepted_rewrite(data.accepted_rewrite, participant_variant)
-    original_input_value = _variant_a_only_value(data.original_input, participant_variant)
-    masked_text_value = _variant_a_only_value(data.final_masked_text, participant_variant)
-    rewrite_text_value = _variant_a_only_value(data.final_rewrite_text, participant_variant)
-    output_id_value = _variant_a_only_value(data.output_id, participant_variant)
-    total_tokens_value = None if variant_b else data.total_tokens
-    input_tokens_value = None if variant_b else data.input_tokens
-    risk_level_value = "[B]" if variant_b else data.risk_level
-    reasoning_value = "[B]" if variant_b else data.reasoning
-    primary_risk_factors_value = "[B]" if variant_b else (
-        json.dumps(data.primary_risk_factors, ensure_ascii=True) if data.primary_risk_factors is not None else None
-    )
-    linkability_risk_level_value = "[B]" if variant_b else data.linkability_risk_level
-    linkability_risk_explanation_value = "[B]" if variant_b else data.linkability_risk_explanation
-    authentication_baiting_level_value = "[B]" if variant_b else data.authentication_baiting_level
-    authentication_baiting_explanation_value = "[B]" if variant_b else data.authentication_baiting_explanation
-    contextual_alignment_level_value = "[B]" if variant_b else data.contextual_alignment_level
-    contextual_alignment_explanation_value = "[B]" if variant_b else data.contextual_alignment_explanation
-    platform_trust_obligation_level_value = "[B]" if variant_b else data.platform_trust_obligation_level
-    platform_trust_obligation_explanation_value = "[B]" if variant_b else data.platform_trust_obligation_explanation
-    psychological_pressure_level_value = "[B]" if variant_b else data.psychological_pressure_level
-    psychological_pressure_explanation_value = "[B]" if variant_b else data.psychological_pressure_explanation
-
-    if existing:
-        # Update existing record
-        if existing.participant_variant is None:
-            existing.participant_variant = participant_variant
+    if variant_b:
+        existing = db.query(ScenarioResponse).filter(
+            ScenarioResponse.participant_id == participant.id,
+            ScenarioResponse.scenario_number == scenario_number,
+            ScenarioResponse.is_final_submission_row == MARKER_TRUE,
+        ).first()
+        if existing is None:
+            existing = ScenarioResponse(
+                participant_id=participant.id,
+                scenario_number=scenario_number,
+                interaction_status=STATUS_B,
+                is_final_submission_row=MARKER_TRUE,
+                participant_variant=participant_variant,
+            )
+            db.add(existing)
+        _set_variant_a_marker_fields(existing, MARKER_B)
+        existing.interaction_status = STATUS_B
+        existing.is_final_submission_row = MARKER_TRUE
         existing.final_message = data.final_message
         existing.completed_at = completion_time
-        if original_input_value is not None:
-            existing.original_input = original_input_value
-        if masked_text_value is not None:
-            existing.masked_text = masked_text_value
-        if rewrite_text_value is not None:
-            existing.suggested_rewrite = rewrite_text_value
-        if output_id_value is not None:
-            existing.output_id = output_id_value
-        if total_tokens_value is not None:
-            existing.total_tokens = total_tokens_value
-        if input_tokens_value is not None:
-            existing.input_tokens = input_tokens_value
-        if scenario_model is not None:
-            existing.model = scenario_model
-
-        # Persist full Output_1 / Output_2 analysis fields for downstream analysis.
-        if risk_level_value is not None:
-            existing.risk_level = risk_level_value
-        if primary_risk_factors_value is not None:
-            existing.primary_risk_factors = primary_risk_factors_value
-        if reasoning_value is not None:
-            existing.reasoning = reasoning_value
-        if linkability_risk_level_value is not None:
-            existing.linkability_risk_level = linkability_risk_level_value
-        if linkability_risk_explanation_value is not None:
-            existing.linkability_risk_explanation = linkability_risk_explanation_value
-        if authentication_baiting_level_value is not None:
-            existing.authentication_baiting_level = authentication_baiting_level_value
-        if authentication_baiting_explanation_value is not None:
-            existing.authentication_baiting_explanation = authentication_baiting_explanation_value
-        if contextual_alignment_level_value is not None:
-            existing.contextual_alignment_level = contextual_alignment_level_value
-        if contextual_alignment_explanation_value is not None:
-            existing.contextual_alignment_explanation = contextual_alignment_explanation_value
-        if platform_trust_obligation_level_value is not None:
-            existing.platform_trust_obligation_level = platform_trust_obligation_level_value
-        if platform_trust_obligation_explanation_value is not None:
-            existing.platform_trust_obligation_explanation = platform_trust_obligation_explanation_value
-        if psychological_pressure_level_value is not None:
-            existing.psychological_pressure_level = psychological_pressure_level_value
-        if psychological_pressure_explanation_value is not None:
-            existing.psychological_pressure_explanation = psychological_pressure_explanation_value
-
-        # Persist explicit UI decision:
-        # true -> user clicked "Accept safer rewrite"
-        # false -> user clicked "Continue anyway"
-        # null -> neither button was clicked before submit
-        existing.accepted_rewrite = accepted_rewrite_value
-        logger.info(f"[DB] Updated scenario_response for participant {participant.id}, scenario {scenario_number}")
+        logger.info("[DB] Upserted variant B scenario_response for participant %s, scenario %s", participant.id, scenario_number)
     else:
-        # Create new record
-        scenario_response = ScenarioResponse(
-            participant_id=participant.id,
-            scenario_number=scenario_number,
-            original_input=original_input_value,
-            masked_text=masked_text_value,
-            output_id=output_id_value,
-            total_tokens=total_tokens_value,
-            input_tokens=input_tokens_value,
-            model=scenario_model,
-            suggested_rewrite=rewrite_text_value,
-            reasoning=reasoning_value,
-            risk_level=risk_level_value,
-            primary_risk_factors=primary_risk_factors_value,
-            linkability_risk_level=linkability_risk_level_value,
-            linkability_risk_explanation=linkability_risk_explanation_value,
-            authentication_baiting_level=authentication_baiting_level_value,
-            authentication_baiting_explanation=authentication_baiting_explanation_value,
-            contextual_alignment_level=contextual_alignment_level_value,
-            contextual_alignment_explanation=contextual_alignment_explanation_value,
-            platform_trust_obligation_level=platform_trust_obligation_level_value,
-            platform_trust_obligation_explanation=platform_trust_obligation_explanation_value,
-            psychological_pressure_level=psychological_pressure_level_value,
-            psychological_pressure_explanation=psychological_pressure_explanation_value,
-            final_message=data.final_message,
-            accepted_rewrite=accepted_rewrite_value,
-            completed_at=completion_time,
-            participant_variant=participant_variant,
+        db.query(ScenarioResponse).filter(
+            ScenarioResponse.participant_id == participant.id,
+            ScenarioResponse.scenario_number == scenario_number,
+        ).update(
+            {ScenarioResponse.is_final_submission_row: MARKER_FALSE},
+            synchronize_session=False,
         )
-        db.add(scenario_response)
-        logger.info(f"[DB] Created scenario_response for participant {participant.id}, scenario {scenario_number}")
+
+        latest = _latest_scenario_response(db, participant.id, scenario_number)
+        if latest is None:
+            latest = ScenarioResponse(
+                participant_id=participant.id,
+                scenario_number=scenario_number,
+                alert_round=0,
+                interaction_status=STATUS_DNI,
+                is_final_submission_row=MARKER_TRUE,
+                final_message=data.final_message,
+                completed_at=completion_time,
+                participant_variant=participant_variant,
+            )
+            _set_variant_a_marker_fields(latest, MARKER_DNI)
+            db.add(latest)
+            logger.info("[DB] Created Variant A DNI scenario_response for participant %s, scenario %s", participant.id, scenario_number)
+        else:
+            if latest.interaction_status in {None, STATUS_PENDING}:
+                latest.interaction_status = STATUS_ABORT
+                _set_variant_a_marker_fields(latest, MARKER_ABORT)
+                if latest.final_message in {None, ""}:
+                    latest.final_message = MARKER_ABORT
+            latest.is_final_submission_row = MARKER_TRUE
+            latest.final_message = data.final_message
+            latest.completed_at = completion_time
+            if latest.participant_variant is None:
+                latest.participant_variant = participant_variant
+            logger.info(
+                "[DB] Finalized Variant A scenario_response id=%s for participant %s, scenario %s",
+                latest.id,
+                participant.id,
+                scenario_number,
+            )
     
     db.commit()
     return {"status": "saved"}

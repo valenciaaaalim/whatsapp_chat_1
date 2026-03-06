@@ -117,12 +117,16 @@ class BaselineAssessmentResponse(BaseModel):
 class ScenarioResponseCreate(BaseModel):
     """Scenario response creation - for recording message data."""
     scenario_number: int = Field(..., ge=1, le=3)
+    alert_round: Optional[int] = None
+    interaction_status: Optional[str] = None
+    is_final_submission_row: Optional[str] = None
     original_input: Optional[str] = None  # Text sent to LLM for assessment
     masked_text: Optional[str] = None  # PII-masked version
     output_id: Optional[str] = None
     input_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     model: Optional[str] = None  # Actual model used for rewrite generation
+    scenario_llm_usage: Optional[Union[int, str]] = None
     risk_level: Optional[str] = None
     reasoning: Optional[str] = None
     suggested_rewrite: Optional[str] = None  # LLM suggested rewrite
@@ -143,12 +147,16 @@ class ScenarioResponseCreate(BaseModel):
 
 class ScenarioResponseUpdate(BaseModel):
     """Scenario response update - for updating existing response."""
+    alert_round: Optional[int] = None
+    interaction_status: Optional[str] = None
+    is_final_submission_row: Optional[str] = None
     original_input: Optional[str] = None
     masked_text: Optional[str] = None
     output_id: Optional[str] = None
     input_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     model: Optional[str] = None
+    scenario_llm_usage: Optional[Union[int, str]] = None
     risk_level: Optional[str] = None
     reasoning: Optional[str] = None
     suggested_rewrite: Optional[str] = None
@@ -165,7 +173,6 @@ class ScenarioResponseUpdate(BaseModel):
     psychological_pressure_explanation: Optional[str] = None
     final_message: Optional[str] = None
     accepted_rewrite: Optional[Union[bool, str]] = None
-    started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
 
@@ -174,12 +181,16 @@ class ScenarioResponseSchema(BaseModel):
     id: int
     participant_id: int
     scenario_number: int
+    alert_round: Optional[int]
+    interaction_status: Optional[str]
+    is_final_submission_row: Optional[str]
     original_input: Optional[str]
     masked_text: Optional[str]
     output_id: Optional[str]
     input_tokens: Optional[int]
     total_tokens: Optional[int]
     model: Optional[str]
+    scenario_llm_usage: Optional[str]
     risk_level: Optional[str]
     reasoning: Optional[str]
     suggested_rewrite: Optional[str]
@@ -196,13 +207,47 @@ class ScenarioResponseSchema(BaseModel):
     psychological_pressure_explanation: Optional[str]
     final_message: Optional[str]
     accepted_rewrite: Optional[str]
-    started_at: Optional[datetime]
     completed_at: Optional[datetime]
     created_at: Optional[datetime] = None
     participant_variant: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class AlertInteractionStartRequest(BaseModel):
+    """Start a new Variant A alert interaction row."""
+    scenario_number: int = Field(..., ge=1, le=3)
+
+
+class AlertInteractionCompleteRequest(BaseModel):
+    """Complete a Variant A alert interaction row with captured assessment data."""
+    scenario_number: int = Field(..., ge=1, le=3)
+    original_input: Optional[str] = None
+    masked_text: Optional[str] = None
+    output_id: Optional[str] = None
+    input_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    model: Optional[str] = None
+    risk_level: Optional[str] = None
+    reasoning: Optional[str] = None
+    suggested_rewrite: Optional[str] = None
+    primary_risk_factors: Optional[List[str]] = None
+    linkability_risk_level: Optional[str] = None
+    linkability_risk_explanation: Optional[str] = None
+    authentication_baiting_level: Optional[str] = None
+    authentication_baiting_explanation: Optional[str] = None
+    contextual_alignment_level: Optional[str] = None
+    contextual_alignment_explanation: Optional[str] = None
+    platform_trust_obligation_level: Optional[str] = None
+    platform_trust_obligation_explanation: Optional[str] = None
+    psychological_pressure_level: Optional[str] = None
+    psychological_pressure_explanation: Optional[str] = None
+
+
+class AlertInteractionDecisionRequest(BaseModel):
+    """Persist the explicit modal decision for an alert interaction row."""
+    accepted_rewrite: Optional[Union[bool, str]] = None
 
 
 # =============================================================================
@@ -364,7 +409,7 @@ class ParticipantProgressResponse(BaseModel):
 # =============================================================================
 class ScenarioMessageRecord(BaseModel):
     """Record the final message for a scenario - maps to scenario_responses table."""
-    participant_id: str  # prolific_id
+    participant_id: Union[str, int]  # prolific_id in current frontend payload
     conversation_index: int  # 0, 1, 2 -> maps to scenario_number 1, 2, 3
     final_message: str
     accepted_rewrite: Optional[Union[bool, str]] = None  # true/false/null for A, "[B]" for B

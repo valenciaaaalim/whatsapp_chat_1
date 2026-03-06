@@ -80,23 +80,24 @@ class BaselineAssessment(Base):
 class ScenarioResponse(Base):
     """Scenario responses - stores per-scenario (1-3) user input and system data."""
     __tablename__ = "scenario_responses"
-    __table_args__ = (
-        UniqueConstraint("participant_id", "scenario_number", name="uq_scenario_response_participant_scenario"),
-    )
     
     id = Column(Integer, primary_key=True, index=True)
     participant_id = Column(Integer, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False)
     scenario_number = Column(Integer, nullable=False)  # 1, 2, or 3
+    alert_round = Column(Integer, nullable=True)  # Variant A interaction sequence; 0 for DNI fallback
+    interaction_status = Column(String, nullable=True)  # [PENDING] | [COMPLETE] | [ABORT] | [DNI] | [B]
+    is_final_submission_row = Column(String, nullable=True)  # [TRUE] | [FALSE]
     original_input = Column(Text, nullable=True)  # Text sent to LLM for assessment
     masked_text = Column(Text, nullable=True)  # PII-masked version
     output_id = Column(String, nullable=True)  # LLM output id captured during alert assessment
-    total_tokens = Column(Integer, nullable=True)  # Total tokens used for final assessed output
-    input_tokens = Column(Integer, nullable=True)  # Input tokens used for final assessed output
+    input_tokens = Column(Integer, nullable=True)  # Token count; 0 for ABORT/DNI/B
+    total_tokens = Column(Integer, nullable=True)  # Token count; 0 for ABORT/DNI/B
     model = Column(String, nullable=True)  # Actual model used for rewrite generation
+    scenario_llm_usage = Column(String, nullable=True)  # Matched nth_call or marker string
     risk_level = Column(String, nullable=True)  # Output_2 Risk_Level
     reasoning = Column(Text, nullable=True)  # Output_2 reasoning
     suggested_rewrite = Column(Text, nullable=True)  # Suggested safer rewrite from LLM
-    final_message = Column(Text, nullable=True)  # Final message sent by user
+    final_message = Column(Text, nullable=True)  # Final message sent by user or marker
     primary_risk_factors = Column(Text, nullable=True)  # JSON array from Output_2 Primary_Risk_Factors
     linkability_risk_level = Column(String, nullable=True)
     linkability_risk_explanation = Column(Text, nullable=True)
@@ -108,8 +109,7 @@ class ScenarioResponse(Base):
     platform_trust_obligation_explanation = Column(Text, nullable=True)
     psychological_pressure_level = Column(String, nullable=True)
     psychological_pressure_explanation = Column(Text, nullable=True)
-    accepted_rewrite = Column(String, nullable=True)  # "true" | "false" | null | "[B]"
-    started_at = Column(DateTime(timezone=True), nullable=True)
+    accepted_rewrite = Column(String, nullable=True)  # "true" | "false" | "[ABORT]" | "[DNI]" | "[B]"
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)

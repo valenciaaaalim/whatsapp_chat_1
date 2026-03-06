@@ -91,7 +91,7 @@ function AnimatedLoading({ baseText = 'Loading' }) {
 }
 
 // Component to handle conversation route with index parameter
-function ConversationRoute({ conversations, prolificId, variant, onComplete }) {
+function ConversationRoute({ conversations, participantId, prolificId, variant, onComplete }) {
   const { index } = useParams();
   const conversationIndex = parseInt(index || '0', 10);
   
@@ -106,6 +106,7 @@ function ConversationRoute({ conversations, prolificId, variant, onComplete }) {
   return (
     <ConversationScreen
       conversation={conversations[conversationIndex]}
+      participantId={participantId}
       participantProlificId={prolificId}
       variant={variant}
       onComplete={onComplete}
@@ -352,6 +353,7 @@ function App() {
               element={
                 <ConversationRoute
                   conversations={conversations}
+                  participantId={participantId}
                   prolificId={prolificId}
                   variant={variant}
                   onComplete={handleConversationComplete}

@@ -11,7 +11,7 @@ import { getRedirectPathFrom409 } from '../utils/apiErrors';
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 const DEFAULT_PII_DEBOUNCE_MS = 400;
 
-function ConversationScreen({ conversation, participantProlificId, variant, onComplete, conversationIndex }) {
+function ConversationScreen({ conversation, participantId, participantProlificId, variant, onComplete, conversationIndex }) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [draftText, setDraftText] = useState('');
@@ -26,7 +26,6 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
   const [lastRawText, setLastRawText] = useState(null);
   const [lastHasPii, setLastHasPii] = useState(false);
   const [lastAssessedText, setLastAssessedText] = useState('');
-  const [rewriteDecision, setRewriteDecision] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [maskedHistory, setMaskedHistory] = useState(null);
   const [piiSpans, setPiiSpans] = useState([]);
@@ -45,6 +44,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
   const composerContainerRef = useRef(null);
   const pendingAbortMarkerRef = useRef(false);
   const pendingRiskOutputIdRef = useRef(null);
+  const activeAlertInteractionRef = useRef(null);
 
   const instructionSets = [
     {
@@ -108,8 +108,8 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     setRiskPending(false);
     setIsWarningOpen(false);
     setLastAssessedText('');
-    setRewriteDecision(null);
     setPiiSpans([]);
+    activeAlertInteractionRef.current = null;
 
     const historyForMasking = initialMessages.map((m) => ({
       id: m.id,
@@ -190,6 +190,95 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     || error?.name === 'CanceledError'
     || error?.name === 'AbortError'
   );
+
+  const navigateOnStepConflict = (error) => {
+    const redirectPath = getRedirectPathFrom409(error);
+    if (!redirectPath) {
+      return false;
+    }
+    navigate(redirectPath, { replace: true });
+    return true;
+  };
+
+  const startAlertInteraction = async () => {
+    if (variant !== 'A' || !participantId) {
+      return null;
+    }
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/api/participants/${participantId}/alert-interactions/start`,
+        { scenario_number: conversationIndex + 1 }
+      );
+      activeAlertInteractionRef.current = response.data;
+      return response.data;
+    } catch (error) {
+      if (!navigateOnStepConflict(error)) {
+        console.error('[ALERT] Failed to start interaction row:', error);
+      }
+      activeAlertInteractionRef.current = null;
+      return null;
+    }
+  };
+
+  const completeAlertInteraction = async (scenarioResponseId, assessment) => {
+    if (variant !== 'A' || !participantId || !scenarioResponseId || !assessment) {
+      return false;
+    }
+
+    const output1 = assessment.output1 || {};
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/participants/${participantId}/alert-interactions/${scenarioResponseId}/complete`,
+        {
+          scenario_number: conversationIndex + 1,
+          original_input: assessment.analysisInput || assessment.originalInput || null,
+          masked_text: assessment.maskedInput || null,
+          output_id: assessment.outputId || null,
+          input_tokens: assessment.inputTokens ?? null,
+          total_tokens: assessment.totalTokens ?? null,
+          model: assessment.model || null,
+          risk_level: assessment.riskLevel || null,
+          reasoning: assessment.reasoning || null,
+          suggested_rewrite: assessment.saferRewrite || null,
+          primary_risk_factors: assessment.primaryRiskFactors || [],
+          linkability_risk_level: output1.linkability_risk?.level || null,
+          linkability_risk_explanation: output1.linkability_risk?.explanation || null,
+          authentication_baiting_level: output1.authentication_baiting?.level || null,
+          authentication_baiting_explanation: output1.authentication_baiting?.explanation || null,
+          contextual_alignment_level: output1.contextual_alignment?.level || null,
+          contextual_alignment_explanation: output1.contextual_alignment?.explanation || null,
+          platform_trust_obligation_level: output1.platform_trust_obligation?.level || null,
+          platform_trust_obligation_explanation: output1.platform_trust_obligation?.explanation || null,
+          psychological_pressure_level: output1.psychological_pressure?.level || null,
+          psychological_pressure_explanation: output1.psychological_pressure?.explanation || null
+        }
+      );
+      return true;
+    } catch (error) {
+      if (!navigateOnStepConflict(error)) {
+        console.error('[ALERT] Failed to complete interaction row:', error);
+      }
+      activeAlertInteractionRef.current = null;
+      return false;
+    }
+  };
+
+  const recordAlertDecision = async (acceptedRewrite) => {
+    const scenarioResponseId = activeAlertInteractionRef.current?.id;
+    if (variant !== 'A' || !participantId || !scenarioResponseId) {
+      return;
+    }
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/participants/${participantId}/alert-interactions/${scenarioResponseId}/decision`,
+        { accepted_rewrite: acceptedRewrite }
+      );
+    } catch (error) {
+      if (!navigateOnStepConflict(error)) {
+        console.error('[ALERT] Failed to persist interaction decision:', error);
+      }
+    }
+  };
 
   const createOutputId = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -273,9 +362,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     const { preserveDecision = false } = options;
     setDraftText(text);
     pendingAbortMarkerRef.current = false;
-    if (!preserveDecision) {
-      setRewriteDecision(null);
-    }
+    void preserveDecision;
 
     // New text input should immediately invalidate/abort prior analysis.
     clearLiveTimers();
@@ -507,16 +594,30 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
       return;
     }
 
+    const interactionRow = await startAlertInteraction();
+    if (!interactionRow) {
+      setIsWarningOpen(false);
+      return;
+    }
+
     if (warningState && lastAssessedText === textToUse) {
+      const completed = await completeAlertInteraction(interactionRow.id, warningState);
+      if (!completed) {
+        setIsWarningOpen(false);
+        return;
+      }
       pendingAbortMarkerRef.current = false;
-      setRewriteDecision(null);
       return;
     }
 
     if (lastRiskAnalysis && lastAssessedText === textToUse) {
+      const completed = await completeAlertInteraction(interactionRow.id, lastRiskAnalysis);
+      if (!completed) {
+        setIsWarningOpen(false);
+        return;
+      }
       setWarningState(lastRiskAnalysis);
       pendingAbortMarkerRef.current = false;
-      setRewriteDecision(null);
       return;
     }
 
@@ -524,6 +625,13 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
       openOnComplete: true,
       forcePiiRefresh: true
     });
+    if (assessment) {
+      const completed = await completeAlertInteraction(interactionRow.id, assessment);
+      if (!completed) {
+        setIsWarningOpen(false);
+        return;
+      }
+    }
     if (assessment?.saferRewrite) {
       setLastShownRewrite(assessment.saferRewrite);
     }
@@ -550,9 +658,6 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     abortActiveAssessRequests();
 
     const finalText = draftText.trim();
-    const isAbortSubmit = variant === 'A' && pendingAbortMarkerRef.current;
-    const analysis = warningState || lastRiskAnalysis;
-    const decisionAtSubmit = isAbortSubmit ? 'ABORT' : rewriteDecision;
 
     const newMessage = {
       id: `sent-${Date.now()}`,
@@ -570,72 +675,27 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
     setLastOfferedRewrite(null);
     setLastShownRewrite(null);
     setIsWarningOpen(false);
-    setRewriteDecision(null);
     setLastAssessedText('');
     setPiiSpans([]);
     setCurrentMessageIndex((prev) => prev + 1);
 
-    // Only persist assessment-derived fields when an assessment was actually run.
-    // If no assessment happened, keep Variant A-only fields null.
-    const originalInput = analysis?.analysisInput ?? analysis?.originalInput ?? null;
-    const finalMaskedText = analysis?.maskedInput ?? null;
-    const finalRewriteText = analysis?.saferRewrite ?? null;
-
     try {
-      const output1 = analysis?.output1 || {};
-
       const messagePayload = {
         participant_id: participantProlificId,
         conversation_index: conversationIndex,
         final_message: finalText,
-        accepted_rewrite: variant === 'B' ? '[B]' : decisionAtSubmit,
-        model: variant === 'B' ? '[B]' : (isAbortSubmit ? 'ABORT' : (analysis?.model || null)),
         variant
       };
-
-      if (variant === 'A') {
-        messagePayload.original_input = isAbortSubmit ? 'ABORT' : originalInput;
-        messagePayload.final_masked_text = isAbortSubmit ? 'ABORT' : finalMaskedText;
-        if (isAbortSubmit) {
-          messagePayload.final_rewrite_text = 'ABORT';
-        } else if (finalRewriteText) {
-          messagePayload.final_rewrite_text = finalRewriteText;
-        }
-        if (!isAbortSubmit) {
-          messagePayload.output_id = analysis?.outputId ?? null;
-          messagePayload.total_tokens = analysis?.totalTokens ?? null;
-          messagePayload.input_tokens = analysis?.inputTokens ?? null;
-        }
-      }
-
-      if (analysis && !isAbortSubmit) {
-        messagePayload.risk_level = analysis.riskLevel || null;
-        messagePayload.primary_risk_factors = analysis.primaryRiskFactors || [];
-        messagePayload.reasoning = analysis.reasoning || '';
-
-        messagePayload.linkability_risk_level = output1.linkability_risk?.level || null;
-        messagePayload.linkability_risk_explanation = output1.linkability_risk?.explanation || null;
-        messagePayload.authentication_baiting_level = output1.authentication_baiting?.level || null;
-        messagePayload.authentication_baiting_explanation = output1.authentication_baiting?.explanation || null;
-        messagePayload.contextual_alignment_level = output1.contextual_alignment?.level || null;
-        messagePayload.contextual_alignment_explanation = output1.contextual_alignment?.explanation || null;
-        messagePayload.platform_trust_obligation_level = output1.platform_trust_obligation?.level || null;
-        messagePayload.platform_trust_obligation_explanation = output1.platform_trust_obligation?.explanation || null;
-        messagePayload.psychological_pressure_level = output1.psychological_pressure?.level || null;
-        messagePayload.psychological_pressure_explanation = output1.psychological_pressure?.explanation || null;
-      }
 
       await axios.post(`${API_BASE_URL}/api/participants/message`, messagePayload);
       pendingAbortMarkerRef.current = false;
     } catch (error) {
-      const redirectPath = getRedirectPathFrom409(error);
-      if (redirectPath) {
+      if (navigateOnStepConflict(error)) {
         if (submitLoadingDelayRef.current) {
           clearTimeout(submitLoadingDelayRef.current);
           submitLoadingDelayRef.current = null;
         }
         setIsSubmitTransitioning(false);
-        navigate(redirectPath, { replace: true });
         return;
       }
       console.error('[Send] error capturing user input', error);
@@ -661,7 +721,7 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
   const handleAcceptRewrite = () => {
     if (warningState && warningState.saferRewrite) {
       const rewriteText = warningState.saferRewrite;
-      setRewriteDecision(true);
+      void recordAlertDecision(true);
       pendingAbortMarkerRef.current = false;
       // Clear stale underline immediately, then route through the normal
       // typing pipeline so GLiNER re-runs on the accepted rewrite.
@@ -685,7 +745,8 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
         void axios.post(`${API_BASE_URL}/api/risk/abort`, {
           participant_prolific_id: participantProlificId,
           session_id: conversationIndex + 1,
-          output_id: abortedOutputId
+          output_id: abortedOutputId,
+          scenario_response_id: activeAlertInteractionRef.current?.id || null
         }).catch((error) => {
           console.warn('[RISK] Failed to log aborted output:', error);
         });
@@ -695,10 +756,9 @@ function ConversationScreen({ conversation, participantProlificId, variant, onCo
       setLastOfferedRewrite(null);
       setLastShownRewrite(null);
       setPiiSpans([]);
-      setRewriteDecision('ABORT');
       pendingAbortMarkerRef.current = true;
     } else {
-      setRewriteDecision(false);
+      void recordAlertDecision(false);
       pendingAbortMarkerRef.current = false;
     }
     clearLiveTimers();

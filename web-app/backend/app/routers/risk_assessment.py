@@ -17,11 +17,13 @@ from app.database import SessionLocal, require_db
 from app.models import (
     LLMOutput,
     Participant,
+    ScenarioResponse,
 )
 from app.services.gemini_service import GeminiService
 from app.services.risk_assessment import RiskAssessmentService
 from app.config import settings
 from app.participant_state import sync_participant_completion_state
+from app.utils import get_singapore_time
 
 # Import gliner_service from backend directory
 # The file is at web-app/backend/gliner_service.py
@@ -35,6 +37,8 @@ from gliner_service import GliNERService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["risk"])
+
+ABORT_MARKER = "[ABORT]"
 
 _gliner_service: Optional[GliNERService] = None
 _annotated_conversations: Optional[Dict[int, List[Dict[str, Any]]]] = None
@@ -654,6 +658,47 @@ def abort_risk(request: dict):
             response_json=None,
             error="ABORTED",
         )
+        raw_scenario_response_id = request.get("scenario_response_id")
+        if raw_scenario_response_id is not None:
+            try:
+                scenario_response_id = int(raw_scenario_response_id)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Invalid scenario_response_id")
+            scenario_row = db.query(ScenarioResponse).filter(
+                ScenarioResponse.id == scenario_response_id,
+                ScenarioResponse.participant_id == participant_id,
+                ScenarioResponse.scenario_number == scenario_id,
+            ).first()
+            if scenario_row is not None:
+                scenario_row.interaction_status = ABORT_MARKER
+                scenario_row.is_final_submission_row = "[FALSE]"
+                scenario_row.original_input = ABORT_MARKER
+                scenario_row.masked_text = ABORT_MARKER
+                scenario_row.output_id = ABORT_MARKER
+                scenario_row.input_tokens = 0
+                scenario_row.total_tokens = 0
+                scenario_row.model = ABORT_MARKER
+                scenario_row.scenario_llm_usage = ABORT_MARKER
+                scenario_row.risk_level = ABORT_MARKER
+                scenario_row.reasoning = ABORT_MARKER
+                scenario_row.suggested_rewrite = ABORT_MARKER
+                scenario_row.primary_risk_factors = ABORT_MARKER
+                scenario_row.linkability_risk_level = ABORT_MARKER
+                scenario_row.linkability_risk_explanation = ABORT_MARKER
+                scenario_row.authentication_baiting_level = ABORT_MARKER
+                scenario_row.authentication_baiting_explanation = ABORT_MARKER
+                scenario_row.contextual_alignment_level = ABORT_MARKER
+                scenario_row.contextual_alignment_explanation = ABORT_MARKER
+                scenario_row.platform_trust_obligation_level = ABORT_MARKER
+                scenario_row.platform_trust_obligation_explanation = ABORT_MARKER
+                scenario_row.psychological_pressure_level = ABORT_MARKER
+                scenario_row.psychological_pressure_explanation = ABORT_MARKER
+                scenario_row.accepted_rewrite = ABORT_MARKER
+                scenario_row.final_message = ABORT_MARKER
+                scenario_row.completed_at = get_singapore_time()
+                if scenario_row.participant_variant is None:
+                    scenario_row.participant_variant = participant_variant
+                db.commit()
         return {
             "status": "logged",
             "participant_id": participant_id,

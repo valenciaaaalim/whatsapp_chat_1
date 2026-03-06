@@ -79,18 +79,16 @@ def _ensure_participant_views() -> None:
                 sr.id,
                 sr.participant_id,
                 sr.scenario_number,
+                sr.alert_round,
+                sr.interaction_status,
+                sr.is_final_submission_row,
                 sr.original_input,
                 sr.masked_text,
                 sr.output_id,
                 sr.input_tokens,
                 sr.total_tokens,
                 sr.model,
-                COALESCE((
-                    SELECT MAX(lo.nth_call)
-                    FROM llm_outputs lo
-                    WHERE lo.participant_id = sr.participant_id
-                      AND lo.scenario_id = sr.scenario_number
-                ), 0) AS scenario_llm_usage,
+                sr.scenario_llm_usage,
                 sr.risk_level,
                 sr.reasoning,
                 sr.suggested_rewrite,
@@ -277,17 +275,29 @@ def _ensure_schema_columns() -> None:
         }
         if "Reasoning" in existing_columns and "reasoning" not in existing_columns:
             statements.append('ALTER TABLE scenario_responses RENAME COLUMN "Reasoning" TO reasoning')
+        if dialect == "postgresql":
+            statements.append("ALTER TABLE scenario_responses DROP CONSTRAINT IF EXISTS uq_scenario_response_participant_scenario")
 
-        if "model" not in existing_columns:
-            statements.append('ALTER TABLE scenario_responses ADD COLUMN "model" VARCHAR')
+        if "alert_round" not in existing_columns:
+            statements.append('ALTER TABLE scenario_responses ADD COLUMN "alert_round" INTEGER')
+        if "interaction_status" not in existing_columns:
+            statements.append('ALTER TABLE scenario_responses ADD COLUMN "interaction_status" VARCHAR')
+        if "is_final_submission_row" not in existing_columns:
+            statements.append('ALTER TABLE scenario_responses ADD COLUMN "is_final_submission_row" VARCHAR')
         if "output_id" not in existing_columns:
             statements.append('ALTER TABLE scenario_responses ADD COLUMN "output_id" VARCHAR')
         if "total_tokens" not in existing_columns:
             statements.append('ALTER TABLE scenario_responses ADD COLUMN "total_tokens" INTEGER')
         if "input_tokens" not in existing_columns:
             statements.append('ALTER TABLE scenario_responses ADD COLUMN "input_tokens" INTEGER')
+        if "model" not in existing_columns:
+            statements.append('ALTER TABLE scenario_responses ADD COLUMN "model" VARCHAR')
+        if "scenario_llm_usage" not in existing_columns:
+            statements.append('ALTER TABLE scenario_responses ADD COLUMN "scenario_llm_usage" VARCHAR')
         if "participant_variant" not in existing_columns:
             statements.append('ALTER TABLE scenario_responses ADD COLUMN "participant_variant" VARCHAR')
+        if "started_at" in existing_columns:
+            statements.append('ALTER TABLE scenario_responses DROP COLUMN IF EXISTS "started_at"')
         statements.append(
             """
             UPDATE scenario_responses sr
@@ -314,6 +324,104 @@ def _ensure_schema_columns() -> None:
                 END
                 """
             )
+        if dialect == "postgresql" and "integer" not in existing_column_types.get("input_tokens", ""):
+            statements.append(
+                """
+                ALTER TABLE scenario_responses
+                ALTER COLUMN input_tokens TYPE INTEGER
+                USING CASE
+                    WHEN input_tokens IS NULL THEN NULL
+                    WHEN trim(input_tokens::text) ~ '^[0-9]+$' THEN trim(input_tokens::text)::integer
+                    ELSE 0
+                END
+                """
+            )
+        if dialect == "postgresql" and "integer" not in existing_column_types.get("total_tokens", ""):
+            statements.append(
+                """
+                ALTER TABLE scenario_responses
+                ALTER COLUMN total_tokens TYPE INTEGER
+                USING CASE
+                    WHEN total_tokens IS NULL THEN NULL
+                    WHEN trim(total_tokens::text) ~ '^[0-9]+$' THEN trim(total_tokens::text)::integer
+                    ELSE 0
+                END
+                """
+            )
+        statements.append(
+            """
+            UPDATE scenario_responses sr
+            SET interaction_status = CASE
+                WHEN sr.interaction_status IS NOT NULL THEN sr.interaction_status
+                WHEN EXISTS (
+                    SELECT 1 FROM participants p
+                    WHERE p.id = sr.participant_id AND p.variant = 'B'
+                ) THEN '[B]'
+                WHEN lower(trim(COALESCE(sr.accepted_rewrite, ''))) = '[abort]' THEN '[ABORT]'
+                WHEN lower(trim(COALESCE(sr.accepted_rewrite, ''))) = 'abort' THEN '[ABORT]'
+                WHEN sr.output_id IS NOT NULL
+                  OR sr.model IS NOT NULL
+                  OR sr.masked_text IS NOT NULL
+                  OR sr.suggested_rewrite IS NOT NULL
+                  OR sr.risk_level IS NOT NULL
+                  OR sr.reasoning IS NOT NULL THEN '[COMPLETE]'
+                WHEN sr.final_message IS NOT NULL AND trim(sr.final_message) <> '' THEN '[DNI]'
+                ELSE '[PENDING]'
+            END
+            """
+        )
+        statements.append(
+            """
+            UPDATE scenario_responses sr
+            SET is_final_submission_row = CASE
+                WHEN sr.is_final_submission_row IS NOT NULL THEN sr.is_final_submission_row
+                WHEN sr.final_message IS NOT NULL AND trim(sr.final_message) <> '' THEN '[TRUE]'
+                ELSE '[FALSE]'
+            END
+            """
+        )
+        statements.append(
+            """
+            UPDATE scenario_responses sr
+            SET alert_round = CASE
+                WHEN sr.alert_round IS NOT NULL THEN sr.alert_round
+                WHEN sr.interaction_status = '[DNI]' THEN 0
+                ELSE 1
+            END
+            """
+        )
+        statements.append(
+            """
+            UPDATE scenario_responses sr
+            SET scenario_llm_usage = (
+                SELECT CAST(lo.nth_call AS TEXT)
+                FROM llm_outputs lo
+                WHERE lo.participant_id = sr.participant_id
+                  AND lo.scenario_id = sr.scenario_number
+                  AND (
+                    (sr.output_id IS NOT NULL AND lo.output_id = sr.output_id)
+                    OR sr.output_id IS NULL
+                  )
+                ORDER BY
+                    CASE WHEN sr.output_id IS NOT NULL AND lo.output_id = sr.output_id THEN 0 ELSE 1 END,
+                    lo.called_at DESC,
+                    lo.id DESC
+                LIMIT 1
+            )
+            WHERE sr.scenario_llm_usage IS NULL
+            """
+        )
+        statements.append(
+            """
+            UPDATE scenario_responses sr
+            SET scenario_llm_usage = CASE
+                WHEN sr.scenario_llm_usage IS NOT NULL THEN sr.scenario_llm_usage
+                WHEN sr.interaction_status = '[DNI]' THEN '[DNI]'
+                WHEN sr.interaction_status = '[B]' THEN '[B]'
+                ELSE NULL
+            END
+            """
+        )
 
     if "participants" in table_names:
         participant_columns = {col.get("name") for col in inspector.get_columns("participants")}
@@ -518,6 +626,20 @@ def _ensure_schema_columns() -> None:
             conn.execute(text(stmt))
         for stmt in statements:
             conn.execute(text(stmt))
+        conn.execute(text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_scenario_responses_final_row
+            ON scenario_responses (participant_id, scenario_number)
+            WHERE is_final_submission_row = '[TRUE]'
+            """
+        ))
+        conn.execute(text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_scenario_responses_alert_round
+            ON scenario_responses (participant_id, scenario_number, alert_round)
+            WHERE alert_round IS NOT NULL
+            """
+        ))
 
 
 def get_db():
