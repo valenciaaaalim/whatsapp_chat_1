@@ -68,7 +68,6 @@ def _ensure_participant_views() -> None:
                 ba.avoid_accidental,
                 ba.familiar_scams,
                 ba.contextual_judgment,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM baseline_assessment ba
             JOIN participants p ON p.id = ba.participant_id
@@ -106,7 +105,6 @@ def _ensure_participant_views() -> None:
                 sr.psychological_pressure_explanation,
                 sr.accepted_rewrite,
                 sr.completed_at,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM scenario_responses sr
             JOIN participants p ON p.id = sr.participant_id
@@ -125,7 +123,6 @@ def _ensure_participant_views() -> None:
                 pss.warning_clarity,
                 pss.warning_helpful,
                 pss.rewrite_quality,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM post_scenario_survey pss
             JOIN participants p ON p.id = pss.participant_id
@@ -141,7 +138,6 @@ def _ensure_participant_views() -> None:
                 eos.sharing_rationale,
                 eos.trust_system,
                 eos.trust_explanation,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM end_of_study_survey eos
             JOIN participants p ON p.id = eos.participant_id
@@ -162,7 +158,6 @@ def _ensure_participant_views() -> None:
                 sus.sus_9,
                 sus.sus_10,
                 sus.sus_score,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM sus_responses sus
             JOIN participants p ON p.id = sus.participant_id
@@ -176,7 +171,6 @@ def _ensure_participant_views() -> None:
                 ba.avoid_accidental,
                 ba.familiar_scams,
                 ba.contextual_judgment,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM baseline_assessment ba
             JOIN participants p ON p.id = ba.participant_id
@@ -189,7 +183,6 @@ def _ensure_participant_views() -> None:
                 sr.scenario_number,
                 sr.final_message,
                 sr.completed_at,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM scenario_responses sr
             JOIN participants p ON p.id = sr.participant_id
@@ -205,7 +198,6 @@ def _ensure_participant_views() -> None:
                 pss.perceived_risk,
                 pss.included_pii_types,
                 pss.included_pii_other_text,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM post_scenario_survey pss
             JOIN participants p ON p.id = pss.participant_id
@@ -219,7 +211,6 @@ def _ensure_participant_views() -> None:
                 eos.realism_explanation,
                 eos.overall_confidence,
                 eos.sharing_rationale,
-                p.prolific_id AS participant_prolific_id,
                 p.variant AS participant_variant
             FROM end_of_study_survey eos
             JOIN participants p ON p.id = eos.participant_id
@@ -443,6 +434,8 @@ def _ensure_schema_columns() -> None:
             )
         if "participant_variant" not in participant_columns:
             statements.append('ALTER TABLE participants ADD COLUMN "participant_variant" VARCHAR')
+        if "session_token" not in participant_columns:
+            statements.append('ALTER TABLE participants ADD COLUMN "session_token" VARCHAR')
         statements.append(
             """
             UPDATE participants
@@ -539,6 +532,8 @@ def _ensure_schema_columns() -> None:
             statements.append("ALTER TABLE llm_outputs ADD COLUMN nth_call INTEGER")
         if "participant_variant" not in llm_columns:
             statements.append("ALTER TABLE llm_outputs ADD COLUMN participant_variant VARCHAR")
+        if "app_status" not in llm_columns:
+            statements.append("ALTER TABLE llm_outputs ADD COLUMN app_status VARCHAR")
         if "cap_reached" in llm_columns:
             statements.append("ALTER TABLE llm_outputs DROP COLUMN IF EXISTS cap_reached")
         statements.append(
@@ -548,6 +543,14 @@ def _ensure_schema_columns() -> None:
                 SELECT p.variant FROM participants p WHERE p.id = lo.participant_id
             )
             WHERE lo.participant_variant IS NULL
+            """
+        )
+        statements.append(
+            """
+            UPDATE llm_outputs
+            SET app_status = 'ABORTED',
+                error = NULL
+            WHERE error = 'ABORTED'
             """
         )
 
@@ -601,6 +604,10 @@ def _ensure_schema_columns() -> None:
 
     if "consent_decisions" in table_names:
         consent_columns = {col.get("name") for col in inspector.get_columns("consent_decisions")}
+        if "participant_platform_id" in consent_columns and "prolific_id" not in consent_columns:
+            statements.append('ALTER TABLE consent_decisions RENAME COLUMN "participant_platform_id" TO "prolific_id"')
+            consent_columns.remove("participant_platform_id")
+            consent_columns.add("prolific_id")
         if "participant_variant" not in consent_columns:
             statements.append('ALTER TABLE consent_decisions ADD COLUMN "participant_variant" VARCHAR')
         statements.append(
@@ -609,12 +616,24 @@ def _ensure_schema_columns() -> None:
             SET participant_variant = (
                 SELECT p.variant
                 FROM participants p
-                WHERE p.prolific_id = cd.participant_platform_id
+                WHERE p.prolific_id = cd.prolific_id
                 LIMIT 1
             )
             WHERE cd.participant_variant IS NULL
             """
         )
+        if dialect == "postgresql":
+            statements.append('ALTER TABLE consent_decisions ALTER COLUMN "prolific_id" SET NOT NULL')
+            statements.append('ALTER TABLE consent_decisions ALTER COLUMN "participant_variant" SET NOT NULL')
+
+    if dialect == "postgresql":
+        statements.append('ALTER TABLE participants ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE scenario_responses ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE post_scenario_survey ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE baseline_assessment ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE sus_responses ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE end_of_study_survey ALTER COLUMN "participant_variant" SET NOT NULL')
+        statements.append('ALTER TABLE llm_outputs ALTER COLUMN "participant_variant" SET NOT NULL')
 
     # Remove deprecated tables.
     statements.append("DROP TABLE IF EXISTS participant_scenario_llm_usage")
@@ -640,6 +659,31 @@ def _ensure_schema_columns() -> None:
             WHERE alert_round IS NOT NULL
             """
         ))
+        # FK indexes for common query patterns
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_scenario_responses_participant_id ON scenario_responses (participant_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_post_scenario_survey_participant_id ON post_scenario_survey (participant_id)"
+        ))
+        # CHECK constraint on is_complete (idempotent: skip if already exists)
+        if dialect == "postgresql":
+            exists = conn.execute(text(
+                "SELECT 1 FROM pg_constraint WHERE conname = 'ck_participants_is_complete'"
+            )).fetchone()
+            if not exists:
+                conn.execute(text(
+                    "ALTER TABLE participants ADD CONSTRAINT ck_participants_is_complete "
+                    "CHECK (is_complete IN ('Progress', 'True', 'False'))"
+                ))
+            exists_sc = conn.execute(text(
+                "SELECT 1 FROM pg_constraint WHERE conname = 'ck_llm_outputs_scenario_id'"
+            )).fetchone()
+            if not exists_sc:
+                conn.execute(text(
+                    "ALTER TABLE llm_outputs ADD CONSTRAINT ck_llm_outputs_scenario_id "
+                    "CHECK (scenario_id BETWEEN 1 AND 3)"
+                ))
 
 
 def get_db():
@@ -672,6 +716,12 @@ def init_db() -> None:
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _ensure_schema_columns()
+    from app.scenario_counters import sync_participant_scenario_counters
+    sync_db = SessionLocal(bind=engine)
+    try:
+        sync_participant_scenario_counters(sync_db)
+    finally:
+        sync_db.close()
     _ensure_participant_views()
     from app.participant_state import sync_all_participant_completion_states
     db = SessionLocal(bind=engine)
@@ -691,6 +741,12 @@ def reset_db() -> None:
     Base.metadata.drop_all(bind=db_engine)
     Base.metadata.create_all(bind=db_engine)
     _ensure_schema_columns()
+    from app.scenario_counters import sync_participant_scenario_counters
+    sync_db = SessionLocal(bind=db_engine)
+    try:
+        sync_participant_scenario_counters(sync_db)
+    finally:
+        sync_db.close()
     _ensure_participant_views()
     logger.info("Database reset - all tables dropped and recreated")
 
@@ -709,6 +765,7 @@ def get_table_info() -> dict:
                 "baseline_assessment",
                 "scenario_responses",
                 "llm_outputs",
+                "participant_scenario_counters",
                 "post_scenario_survey",
                 "end_of_study_survey",
                 "sus_responses",

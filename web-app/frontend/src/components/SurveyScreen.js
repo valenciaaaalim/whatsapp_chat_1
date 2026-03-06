@@ -233,7 +233,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   
   // Determine which questions to show based on survey type and variant
   let questions = [];
-  if (surveyType === 'baseline' || surveyType === 'pre') {
+  if (surveyType === 'baseline') {
     // Baseline Self-Assessment (previously pre-survey)
     questions = BASELINE_QUESTIONS;
   } else if (surveyType === 'mid' || surveyType === 'post-scenario') {
@@ -456,7 +456,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
     setSubmitError(null);
     try {
       // Submit to normalized database endpoints based on survey type
-      if (surveyType === 'baseline' || surveyType === 'pre') {
+      if (surveyType === 'baseline') {
         // Baseline Self-Assessment
         await postSurvey(
           () => axios.post(`${API_BASE_URL}/api/participants/${participantId}/baseline-assessment`, {
@@ -526,7 +526,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
       }
 
       // Navigate based on survey type
-      if (surveyType === 'baseline' || surveyType === 'pre') {
+      if (surveyType === 'baseline') {
         navigate('/conversation/0', { replace: true });
       } else if (surveyType === 'mid' || surveyType === 'post-scenario') {
         const nextIndex = parseInt(conversationIndex || '0') + 1;
@@ -547,7 +547,6 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
       console.error('Error submitting survey:', error);
       const message = getSubmitErrorMessage(error);
       setSubmitError(message);
-      alert(message);
     } finally {
       setSubmitting(false);
     }
@@ -662,8 +661,12 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   return (
     <div className="survey-screen">
       <div className="survey-content" ref={surveyContentRef}>
-        <h1>Survey Questions</h1>
-        <p>Please answer the following questions about your experience.</p>
+        <h1>
+          {surveyType === 'baseline' ? 'Baseline Self-Assessment'
+            : (surveyType === 'mid' || surveyType === 'post-scenario') ? `Post-Scenario Survey (Scenario ${parseInt(conversationIndex || '0', 10) + 1} of 3)`
+            : 'End-of-Study Survey'}
+        </h1>
+        <p>Please answer the following questions{surveyType === 'baseline' ? '.' : ' about your experience.'}</p>
         
         <div className="survey-questions">
           {questions.map((question) => (

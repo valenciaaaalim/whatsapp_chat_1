@@ -30,7 +30,8 @@ class Participant(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     duration_seconds = Column(Float, nullable=True)  # Duration of study in seconds
     is_complete = Column(String, nullable=False, default="Progress")  # Progress | True | False
-    participant_variant = Column(String, nullable=True)  # Mirror of variant for analytics exports
+    participant_variant = Column(String, nullable=False)  # Mirror of variant for analytics exports
+    session_token = Column(String, nullable=True)  # Per-session UUID; rotated on each new login
     
     # Relationships to normalized tables
     baseline_assessment = relationship("BaselineAssessment", back_populates="participant", uselist=False, cascade="all, delete-orphan")
@@ -48,10 +49,10 @@ class ConsentDecision(Base):
     __tablename__ = "consent_decisions"
 
     id = Column(Integer, primary_key=True, index=True)
-    participant_platform_id = Column(String, nullable=True, index=True)
+    prolific_id = Column(String, nullable=False, index=True)
     consent = Column(String, nullable=False)  # 'yes' or 'no'
     timestamp_utc = Column(DateTime(timezone=True), nullable=False)
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
 
 
 # =============================================================================
@@ -68,7 +69,7 @@ class BaselineAssessment(Base):
     familiar_scams = Column(Integer, nullable=False)  # Likert 1-7
     contextual_judgment = Column(Integer, nullable=False)  # Likert 1-7
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
     
     # Relationships
     participant = relationship("Participant", back_populates="baseline_assessment")
@@ -112,7 +113,7 @@ class ScenarioResponse(Base):
     accepted_rewrite = Column(String, nullable=True)  # "true" | "false" | "[ABORT]" | "[DNI]" | "[B]"
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
     
     # Relationships
     participant = relationship("Participant", back_populates="scenario_responses")
@@ -142,7 +143,7 @@ class PostScenarioSurvey(Base):
     warning_helpful = Column(String, nullable=True)
     rewrite_quality = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
     
     # Relationships
     participant = relationship("Participant", back_populates="post_scenario_surveys")
@@ -169,7 +170,7 @@ class SusResponse(Base):
     sus_10 = Column(Integer, nullable=False)  # 1-5
     sus_score = Column(Numeric(5, 2), nullable=True)  # Calculated SUS score (0-100)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
     
     # Relationships
     participant = relationship("Participant", back_populates="sus_responses")
@@ -193,7 +194,7 @@ class EndOfStudySurvey(Base):
     trust_system = Column(String, nullable=True)  # Likert 1-7 or "[B]"
     trust_explanation = Column(Text, nullable=True)  # Free text
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
     
     # Relationships
     participant = relationship("Participant", back_populates="end_of_study_survey")
@@ -217,4 +218,20 @@ class LLMOutput(Base):
     nth_call = Column(Integer, nullable=True)
     response_json = Column(JSONB, nullable=True)
     error = Column(Text, nullable=True)
-    participant_variant = Column(String, nullable=True)  # Snapshot variant marker (A/B)
+    app_status = Column(String, nullable=True)  # App-side status like ABORTED; provider errors stay in error
+    participant_variant = Column(String, nullable=False)  # Snapshot variant marker (A/B)
+
+
+class ParticipantScenarioCounter(Base):
+    """Internal per-participant/per-scenario counters used for race-safe sequencing."""
+    __tablename__ = "participant_scenario_counters"
+    __table_args__ = (
+        UniqueConstraint("participant_id", "scenario_number", name="uq_psc_participant_scenario"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    participant_id = Column(Integer, ForeignKey("participants.id", ondelete="CASCADE"), nullable=False, index=True)
+    scenario_number = Column(Integer, nullable=False)
+    next_alert_round = Column(Integer, nullable=False, default=1)
+    next_llm_nth_call = Column(Integer, nullable=False, default=1)
+    llm_cap_used = Column(Integer, nullable=False, default=0)

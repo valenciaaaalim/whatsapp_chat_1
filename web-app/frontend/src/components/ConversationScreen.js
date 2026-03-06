@@ -19,6 +19,8 @@ function ConversationScreen({ conversation, participantId, participantProlificId
   const [lastRiskAnalysis, setLastRiskAnalysis] = useState(null);
   const [riskPending, setRiskPending] = useState(false);
   const [isWarningOpen, setIsWarningOpen] = useState(false);
+  const [riskError, setRiskError] = useState(false);
+  const [capReached, setCapReached] = useState(false);
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
   const [, setLastOfferedRewrite] = useState(null);
   const [, setLastShownRewrite] = useState(null);
@@ -109,7 +111,15 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     setIsWarningOpen(false);
     setLastAssessedText('');
     setPiiSpans([]);
+    setRiskError(false);
+    setCapReached(false);
     activeAlertInteractionRef.current = null;
+
+    // Restore draft from sessionStorage if the user refreshed mid-typing
+    try {
+      const savedDraft = sessionStorage.getItem(`draft_conv_${conversationIndex}`);
+      if (savedDraft) setDraftText(savedDraft);
+    } catch (_) { /* ignore */ }
 
     const historyForMasking = initialMessages.map((m) => ({
       id: m.id,
@@ -358,9 +368,12 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     }
   };
 
+  const draftStorageKey = `draft_conv_${conversationIndex}`;
+
   const handleTyping = (text, options = {}) => {
     const { preserveDecision = false } = options;
     setDraftText(text);
+    try { sessionStorage.setItem(draftStorageKey, text); } catch (_) { /* quota */ }
     pendingAbortMarkerRef.current = false;
     void preserveDecision;
 
@@ -505,6 +518,24 @@ function ConversationScreen({ conversation, participantId, participantProlificId
       }
 
       const rewrite = response.data.safer_rewrite || '';
+      const isCapped = !!response.data.cap_reached;
+      const capNoCache = !!response.data.cap_no_cache;
+
+      if (isCapped && capNoCache) {
+        // Capped with no prior result — show error state in modal
+        if (!silent && requestId === riskRequestCounterRef.current) {
+          setCapReached(true);
+          setRiskError(true);
+          setRiskPending(false);
+          setWarningState(null);
+        }
+        return null;
+      }
+
+      if (isCapped) {
+        setCapReached(true);
+      }
+
       const assessment = {
         riskLevel: response.data.risk_level,
         saferRewrite: rewrite,
@@ -555,9 +586,8 @@ function ConversationScreen({ conversation, participantId, participantProlificId
         console.error('Error assessing risk:', error);
         setWarningState(null);
         setLastRiskAnalysis(null);
-        if (!openOnComplete) {
-          setIsWarningOpen(false);
-        }
+        setRiskError(true);
+        // Keep modal open — WarningModal will show error state with retry
       }
       return null;
     } finally {
@@ -576,6 +606,20 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     }
   };
 
+  const handleRetryAssessment = async () => {
+    setRiskError(false);
+    setRiskPending(true);
+    const textToUse = draftText.trim();
+    if (!textToUse) return;
+    const assessment = await assessRisk(textToUse, { openOnComplete: true, forcePiiRefresh: false });
+    if (assessment) {
+      const interactionRow = await startAlertInteraction();
+      if (interactionRow) {
+        await completeAlertInteraction(interactionRow.id, assessment);
+      }
+    }
+  };
+
   const handleOpenWarning = async () => {
     const textToUse = draftText.trim();
     if (!textToUse) {
@@ -583,6 +627,7 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     }
     setIsDrawerOpen(false);
     suppressAutoOpenRef.current = false;
+    setRiskError(false);
 
     // Stop pending typing debounce before explicit analysis click.
     clearLiveTimers();
@@ -660,7 +705,7 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     const finalText = draftText.trim();
 
     const newMessage = {
-      id: `sent-${Date.now()}`,
+      id: `sent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       text: finalText,
       direction: 'SENT',
       timestamp: new Date()
@@ -668,10 +713,11 @@ function ConversationScreen({ conversation, participantId, participantProlificId
 
     // Optimistic UI update keeps send interaction responsive.
     setMessages((prev) => [...prev, newMessage]);
-    setDraftText('');
     setWarningState(null);
     setLastRiskAnalysis(null);
     setRiskPending(false);
+    setRiskError(false);
+    setCapReached(false);
     setLastOfferedRewrite(null);
     setLastShownRewrite(null);
     setIsWarningOpen(false);
@@ -689,6 +735,9 @@ function ConversationScreen({ conversation, participantId, participantProlificId
 
       await axios.post(`${API_BASE_URL}/api/participants/message`, messagePayload);
       pendingAbortMarkerRef.current = false;
+      // Only clear draft after confirmed success
+      setDraftText('');
+      try { sessionStorage.removeItem(draftStorageKey); } catch (_) { /* ignore */ }
     } catch (error) {
       if (navigateOnStepConflict(error)) {
         if (submitLoadingDelayRef.current) {
@@ -764,6 +813,18 @@ function ConversationScreen({ conversation, participantId, participantProlificId
     clearLiveTimers();
     setIsWarningOpen(false);
   };
+
+  // Warn user if they try to close/refresh while a send is in flight
+  useEffect(() => {
+    const handler = (e) => {
+      if (sendInFlightRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   useEffect(() => () => {
     if (submitLoadingDelayRef.current) {
@@ -851,12 +912,15 @@ function ConversationScreen({ conversation, participantId, participantProlificId
           inputDisabled={isWarningOpen}
         />
       </div>
-      {isWarningOpen && (riskPending || warningState) && (
+      {isWarningOpen && (
         <WarningModal
           warningState={warningState}
           riskPending={riskPending}
+          riskError={riskError}
+          capReached={capReached}
           onAcceptRewrite={handleAcceptRewrite}
           onContinueAnyway={handleContinueAnyway}
+          onRetry={handleRetryAssessment}
         />
       )}
 

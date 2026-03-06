@@ -9,6 +9,7 @@ const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost
 function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const [consentError, setConsentError] = useState(null);
   const [waitingForPiiModel, setWaitingForPiiModel] = useState(false);
   const [loadingText, setLoadingText] = useState('Loading');
   const [hasReachedBottom, setHasReachedBottom] = useState(false);
@@ -17,7 +18,7 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
   const logConsent = async (consent) => {
     await axios.post(`${API_BASE_URL}/api/consent`, {
       consent,
-      participant_platform_id: prolificId || null
+      prolific_id: prolificId || null
     });
   };
 
@@ -65,9 +66,10 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
         await waitForPiiReady();
       }
       await logConsent('yes');
-      navigate('/survey/pre', { replace: true });
+      navigate('/survey/baseline', { replace: true });
     } catch (error) {
       console.error('Error logging consent:', error);
+      setConsentError('Something went wrong. Please try again.');
     } finally {
       setWaitingForPiiModel(false);
       setSubmitting(false);
@@ -127,6 +129,11 @@ function WelcomeScreen({ prolificId, variant, piiReady, waitForPiiReady }) {
         </div>
         <div className="consent-fade" />
         <div className="consent-footer">
+          {consentError && (
+            <div className="consent-error" style={{ color: '#d32f2f', fontSize: '14px', marginBottom: '8px', textAlign: 'center' }}>
+              {consentError}
+            </div>
+          )}
           <button
             className={`consent-continue${hasReachedBottom ? ' ready' : ''}`}
             onClick={handleContinue}

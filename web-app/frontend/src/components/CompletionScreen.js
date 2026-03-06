@@ -3,22 +3,34 @@ import axios from 'axios';
 import './CompletionScreen.css';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 function CompletionScreen({ participantId, prolificId }) {
   const [completionUrl, setCompletionUrl] = useState('');
+  const [completionCode, setCompletionCode] = useState('');
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   const fetchCompletionUrl = useCallback(async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/completion/prolific`, {
-        params: { participant_id: participantId, prolific_id: prolificId }
-      });
-      setCompletionUrl(response.data.completion_url);
-    } catch (error) {
-      console.error('Error fetching completion URL:', error);
-    } finally {
-      setLoading(false);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/completion/prolific`, {
+          params: { participant_id: participantId, prolific_id: prolificId }
+        });
+        setCompletionUrl(response.data.completion_url || '');
+        setCompletionCode(response.data.completion_code || '');
+        setLoading(false);
+        return;
+      } catch (error) {
+        console.error(`Completion URL fetch attempt ${attempt}/${MAX_RETRIES} failed:`, error);
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        }
+      }
     }
+    setFailed(true);
+    setLoading(false);
   }, [participantId, prolificId]);
 
   useEffect(() => {
@@ -29,6 +41,21 @@ function CompletionScreen({ participantId, prolificId }) {
     if (completionUrl) {
       window.location.href = completionUrl;
     }
+  };
+
+  const renderFallback = () => {
+    if (completionCode) {
+      return (
+        <p className="completion-url-info">
+          Please return to Prolific and enter your completion code: <strong>{completionCode}</strong>
+        </p>
+      );
+    }
+    return (
+      <p className="completion-url-info">
+        Please return to Prolific and confirm your submission there.
+      </p>
+    );
   };
 
   return (
@@ -47,10 +74,10 @@ function CompletionScreen({ participantId, prolificId }) {
           <button className="completion-button" onClick={handleRedirect}>
             Return to Prolific
           </button>
+        ) : failed ? (
+          renderFallback()
         ) : (
-          <p className="completion-url-info">
-            If you were referred from Prolific, please use your completion code.
-          </p>
+          renderFallback()
         )}
       </div>
     </div>

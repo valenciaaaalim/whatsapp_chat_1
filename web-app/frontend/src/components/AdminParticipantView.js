@@ -142,11 +142,6 @@ function AdminParticipantView() {
           </section>
 
           <section className="admin-section">
-            <h2>PII Disclosures</h2>
-            <RecordList records={data.pii_disclosures} labelPrefix="Disclosure" />
-          </section>
-
-          <section className="admin-section">
             <h2>SUS Responses</h2>
             {data.sus_responses ? (
               <RecordView record={data.sus_responses} />

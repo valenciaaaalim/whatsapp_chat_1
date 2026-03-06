@@ -69,6 +69,7 @@ class ParticipantCreateResponse(BaseModel):
     variant: str
     status: str  # 'new', 'existing', 'completed'
     completion_url: Optional[str] = None
+    session_token: Optional[str] = None
 
 
 # =============================================================================
@@ -77,6 +78,7 @@ class ParticipantCreateResponse(BaseModel):
 class ConsentDecisionCreate(BaseModel):
     """Consent decision log."""
     consent: str = Field(..., pattern="^(yes|no)$")
+    prolific_id: Optional[str] = None
     participant_platform_id: Optional[str] = None
 
 
@@ -287,27 +289,6 @@ class PostScenarioSurveySchema(BaseModel):
         from_attributes = True
 
 
-# =============================================================================
-# PII Disclosure schemas (Table 5)
-# =============================================================================
-class PiiDisclosureCreate(BaseModel):
-    """PII Disclosure creation - one record per PII type selected."""
-    scenario_number: int = Field(..., ge=1, le=3)
-    pii_type: str  # Will be validated against enum values
-    other_specified: Optional[str] = None
-
-
-class PiiDisclosureSchema(BaseModel):
-    """PII Disclosure schema."""
-    id: int
-    participant_id: int
-    scenario_number: int
-    pii_type: str
-    other_specified: Optional[str]
-    created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 
 # =============================================================================
@@ -355,9 +336,9 @@ class SusResponseSchema(BaseModel):
 class EndOfStudySurveyCreate(BaseModel):
     """End-of-Study Survey creation."""
     tasks_realistic: int = Field(..., ge=1, le=7)
-    realism_explanation: Optional[str] = None
+    realism_explanation: str = Field(..., min_length=1)
     overall_confidence: int = Field(..., ge=1, le=7)
-    sharing_rationale: Optional[str] = None
+    sharing_rationale: str = Field(..., min_length=1)
     # Group A only (nullable)
     trust_system: Optional[Union[int, str]] = None
     trust_explanation: Optional[str] = None
@@ -389,7 +370,6 @@ class ParticipantDataResponse(BaseModel):
     baseline_assessment: Optional[BaselineAssessmentResponse] = None
     scenario_responses: List[ScenarioResponseSchema] = Field(default_factory=list)
     post_scenario_surveys: List[PostScenarioSurveySchema] = Field(default_factory=list)
-    pii_disclosures: List[PiiDisclosureSchema] = Field(default_factory=list)
     sus_responses: Optional[SusResponseSchema] = None
     end_of_study_survey: Optional[EndOfStudySurveySchema] = None
 

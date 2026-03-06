@@ -1,7 +1,7 @@
 """
 Risk assessment routes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 import logging
 import sys
 import os
@@ -10,7 +10,6 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, require_db
@@ -23,7 +22,8 @@ from app.services.gemini_service import GeminiService
 from app.services.risk_assessment import RiskAssessmentService
 from app.config import settings
 from app.participant_state import sync_participant_completion_state
-from app.utils import get_singapore_time
+from app.scenario_counters import allocate_llm_nth_call, release_llm_cap_slot, reserve_llm_cap_slot
+from app.utils import get_singapore_time, require_mobile_request
 
 # Import gliner_service from backend directory
 # The file is at web-app/backend/gliner_service.py
@@ -177,18 +177,6 @@ def _is_variant_a(db: Session, participant_id: int) -> bool:
     return str(variant or "").strip().upper() == "A"
 
 
-def _next_nth_call(db: Session, participant_id: int, scenario_id: int) -> int:
-    current_max = (
-        db.query(func.max(LLMOutput.nth_call))
-        .filter(
-            LLMOutput.participant_id == participant_id,
-            LLMOutput.scenario_id == scenario_id,
-        )
-        .scalar()
-    )
-    return int(current_max or 0) + 1
-
-
 def _find_llm_output_by_output_id(
     db: Session,
     participant_id: int,
@@ -221,6 +209,7 @@ def _persist_llm_output(
     nth_call: Optional[int],
     response_json: Optional[Dict[str, Any]],
     error: Optional[str] = None,
+    app_status: Optional[str] = None,
 ) -> LLMOutput:
     """Persist or update an LLM output row keyed by output_id when available."""
     existing = _find_llm_output_by_output_id(
@@ -230,7 +219,7 @@ def _persist_llm_output(
         output_id=output_id,
     )
     if existing:
-        if existing.error == "ABORTED" and response_json is not None:
+        if existing.app_status == "ABORTED" and response_json is not None:
             # Preserve explicit user abort logs as terminal for that output id.
             return existing
         if llm_used is not None:
@@ -247,11 +236,13 @@ def _persist_llm_output(
             existing.response_json = response_json
         if error is not None:
             existing.error = error
+        if app_status is not None:
+            existing.app_status = app_status
         db.commit()
         db.refresh(existing)
         return existing
 
-    next_nth = int(nth_call) if nth_call is not None else _next_nth_call(db, participant_id, scenario_id)
+    next_nth = int(nth_call) if nth_call is not None else allocate_llm_nth_call(db, participant_id, scenario_id)
     row = LLMOutput(
         participant_id=participant_id,
         scenario_id=scenario_id,
@@ -262,6 +253,7 @@ def _persist_llm_output(
         nth_call=next_nth,
         response_json=response_json,
         error=error,
+        app_status=app_status,
         participant_variant=participant_variant,
     )
     db.add(row)
@@ -448,8 +440,9 @@ def load_seed_conversations_with_metadata() -> List[Dict[str, Any]]:
 
 
 @router.get("/conversations/seed")
-def get_seed_conversations():
+def get_seed_conversations(request: Request):
     """Get all seed conversations for the study."""
+    require_mobile_request(request)
     return load_seed_conversations_with_metadata()
 
 
@@ -565,15 +558,75 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
         bool(masked_history)
     )
 
+    reserved_llm_slot = False
+    # --- LLM cap enforcement (BB-04) — atomic via per-scenario counter row ---
+    if participant_id is not None and participant_is_variant_a:
+        cap_db = _open_db_session()
+        try:
+            allowed, call_count = reserve_llm_cap_slot(
+                cap_db,
+                participant_id=participant_id,
+                scenario_number=scenario_id,
+                limit=settings.LLM_SCENARIO_MAX_CALLS,
+            )
+            if not allowed:
+                cached = (
+                    cap_db.query(LLMOutput)
+                    .filter(
+                        LLMOutput.participant_id == participant_id,
+                        LLMOutput.scenario_id == scenario_id,
+                        LLMOutput.response_json.isnot(None),
+                        LLMOutput.error.is_(None),
+                    )
+                    .order_by(LLMOutput.id.desc())
+                    .first()
+                )
+                if cached and cached.response_json:
+                    logger.info("[RISK] LLM cap reached (%d/%d) — returning cached result", call_count, settings.LLM_SCENARIO_MAX_CALLS)
+                    payload = dict(cached.response_json)
+                    payload["cap_reached"] = True
+                    return payload
+                else:
+                    logger.warning("[RISK] LLM cap reached (%d/%d) — no cached result", call_count, settings.LLM_SCENARIO_MAX_CALLS)
+                    return {
+                        "risk_level": "UNKNOWN",
+                        "safer_rewrite": "",
+                        "show_warning": True,
+                        "primary_risk_factors": [],
+                        "reasoning": "",
+                        "model": None,
+                        "output_id": None,
+                        "total_tokens": None,
+                        "input_tokens": None,
+                        "output_1": {},
+                        "output_2": {},
+                        "cap_reached": True,
+                        "cap_no_cache": True,
+                    }
+            cap_db.commit()
+            reserved_llm_slot = True
+        finally:
+            cap_db.close()
+
     logger.info("[RISK] Calling LLM for risk assessment with masked_text (len=%d)...", len(masked_text))
-    result = risk_service.assess_risk(
-        draft_text=draft_text,
-        conversation_history=conversation_history,
-        masked_draft=masked_text,  # Pass the masked version to LLM
-        masked_history=masked_history,
-        session_id=session_id,
-        prolific_id=participant_prolific_id
-    )
+    try:
+        result = risk_service.assess_risk(
+            draft_text=draft_text,
+            conversation_history=conversation_history,
+            masked_draft=masked_text,  # Pass the masked version to LLM
+            masked_history=masked_history,
+            session_id=session_id,
+            prolific_id=participant_prolific_id
+        )
+    except Exception:
+        if reserved_llm_slot and participant_id is not None and participant_is_variant_a:
+            rollback_db = _open_db_session()
+            try:
+                release_llm_cap_slot(rollback_db, participant_id=participant_id, scenario_number=scenario_id)
+                rollback_db.commit()
+            finally:
+                rollback_db.close()
+        raise
     
     logger.info("[RISK] LLM result: risk_level=%s, has_rewrite=%s, rewrite_len=%d", 
                 result["risk_level"], bool(result["safer_rewrite"]), len(result["safer_rewrite"]) if result["safer_rewrite"] else 0)
@@ -595,7 +648,8 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
     if participant_id is not None and participant_is_variant_a:
         log_db = _open_db_session()
         try:
-            output_id = _resolve_output_id(request, fallback=result.get("llm_output_id"))
+            # Store only Gemini's real responseId; NULL if Gemini didn't return one
+            output_id = result.get("llm_output_id") or None
             llm_error = _normalize_error_text(result.get("error"))
             stored_response_json = None if llm_error else response_payload
             row = _persist_llm_output(
@@ -610,6 +664,7 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
                 nth_call=None,
                 response_json=stored_response_json,
                 error=llm_error or None,
+                app_status=None,
             )
             logger.info(
                 "[LLM_OUTPUT] participant_id=%s scenario_id=%s output_id=%s nth_call=%s llm_used=%s total_tokens=%s input_tokens=%s error=%s",
@@ -629,12 +684,18 @@ def _process_risk_assessment_payload(request: Dict[str, Any]) -> Any:
 
 
 @router.post("/risk/abort")
-def abort_risk(request: dict):
+def abort_risk(http_request: Request, request: dict):
     """Log a user-aborted alert request while modal was still pending."""
+    require_mobile_request(http_request)
     db = _open_db_session()
     try:
         participant_id = _resolve_participant_id(db, request)
         participant_row = db.query(Participant).filter(Participant.id == participant_id).first()
+        # Verify session token
+        if participant_row and participant_row.session_token is not None:
+            token = http_request.headers.get("x-session-token")
+            if not token or participant_row.session_token != token:
+                raise HTTPException(status_code=401, detail="Session invalidated.")
         participant_variant: Optional[str] = None
         if participant_row is not None:
             participant_row = sync_participant_completion_state(db, participant_row, mark_active=True)
@@ -643,7 +704,7 @@ def abort_risk(request: dict):
             return {"status": "ignored", "reason": "variant_b"}
 
         scenario_id = _resolve_scenario_id(request)
-        output_id = _resolve_output_id(request)
+        output_id = None
         llm_used = request.get("llm_used") or settings.GEMINI_FIRST_MODEL
         row = _persist_llm_output(
             db,
@@ -656,7 +717,8 @@ def abort_risk(request: dict):
             input_tokens=None,
             nth_call=None,
             response_json=None,
-            error="ABORTED",
+            error=None,
+            app_status="ABORTED",
         )
         raw_scenario_response_id = request.get("scenario_response_id")
         if raw_scenario_response_id is not None:
@@ -711,8 +773,32 @@ def abort_risk(request: dict):
 
 
 @router.post("/risk/assess")
-def assess_risk(request: dict):
+def assess_risk(http_request: Request, request: dict):
     """Assess risk of a draft message with per-session single-flight coalescing."""
+    require_mobile_request(http_request)
+    # Verify session token before entering single-flight coordinator
+    session_token = http_request.headers.get("x-session-token")
+    participant_prolific_id = request.get("participant_prolific_id")
+    if participant_prolific_id:
+        db = _open_db_session()
+        try:
+            participant = db.query(Participant).filter(
+                Participant.prolific_id == participant_prolific_id
+            ).first()
+            if participant and participant.session_token is not None:
+                if not session_token:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Session token required. Please refresh to continue.",
+                    )
+                if participant.session_token != session_token:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Session invalidated. Another tab or device started a new session.",
+                    )
+        finally:
+            db.close()
+
     key = _single_flight_key(request)
     logger.info(
         "[RISK] assess_risk endpoint called (key=%s, draft_len=%d)",

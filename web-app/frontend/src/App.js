@@ -7,10 +7,17 @@ import SurveyScreen from './components/SurveyScreen';
 import CompletionScreen from './components/CompletionScreen';
 import AlreadyCompletedScreen from './components/AlreadyCompletedScreen';
 import AdminParticipantView from './components/AdminParticipantView';
+import StudyProgressBar from './components/StudyProgressBar';
 import './App.css';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 const PROLIFIC_STORAGE_KEY = 'whatsapp_prolific_id';
+
+function isMobileDevice() {
+  const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPod|iPad|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return true;
+  return window.innerWidth <= 768 && 'ontouchstart' in window;
+}
 
 // Hardcoded conversation data (from annotated_test.json)
 // This will be loaded from the backend in production
@@ -180,7 +187,7 @@ function App() {
   const [participantStatus, setParticipantStatus] = useState('new');
   const [completionUrl, setCompletionUrl] = useState('');
   const [prolificId, setProlificId] = useState('');
-  const [currentConversationIndex, setCurrentConversationIndex] = useState(0);
+  const [sessionToken, setSessionToken] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(!isAdminRoute);
   const [initialized, setInitialized] = useState(false);
@@ -201,6 +208,9 @@ function App() {
       setParticipantStatus(response.data.status || 'new');
       setCompletionUrl(response.data.completion_url || '');
       setProlificId(prolificId);
+      if (response.data.session_token) {
+        setSessionToken(response.data.session_token);
+      }
 
     } catch (error) {
       console.error('Error initializing participant:', error);
@@ -257,6 +267,11 @@ function App() {
       setLoading(false);
       return;
     }
+    // Block participant creation for non-mobile users
+    if (!isMobileDevice()) {
+      setLoading(false);
+      return;
+    }
     // Initialize participant only once
     if (!initialized) {
       initializeParticipant();
@@ -297,10 +312,14 @@ function App() {
     return () => clearTimeout(timer);
   }, [variant, isAdminRoute]);
 
-  const handleConversationComplete = () => {
-    if (currentConversationIndex < conversations.length - 1) {
-      setCurrentConversationIndex(currentConversationIndex + 1);
+  useEffect(() => {
+    if (sessionToken) {
+      axios.defaults.headers.common['X-Session-Token'] = sessionToken;
     }
+  }, [sessionToken]);
+
+  const handleConversationComplete = () => {
+    // Navigation is handled by the router; this is a no-op kept for prop interface compatibility.
   };
 
   if (isAdminRoute) {
@@ -313,6 +332,15 @@ function App() {
           </Routes>
         </div>
       </Router>
+    );
+  }
+
+  if (!isMobileDevice()) {
+    return (
+      <div className="error" style={{ padding: '2rem', textAlign: 'center' }}>
+        <p>This study must be completed on a <strong>mobile device</strong>.</p>
+        <p>Please open this link on your smartphone.</p>
+      </div>
     );
   }
 
@@ -335,6 +363,7 @@ function App() {
   return (
     <Router>
       <div className="App">
+        <StudyProgressBar />
         <Routes>
           <Route element={<StudyGuard participantId={participantId} />}>
             <Route 

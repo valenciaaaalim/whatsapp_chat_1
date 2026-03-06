@@ -4,8 +4,8 @@ All endpoints write to normalized study tables.
 """
 import logging
 import json
-from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any, Optional
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from app.database import get_db
@@ -36,7 +36,8 @@ from app.schemas import (
     ParticipantSchema,
     ParticipantProgressResponse,
 )
-from app.utils import ensure_singapore_tz, get_singapore_time
+from app.utils import ensure_singapore_tz, get_singapore_time, require_mobile_request
+from app.scenario_counters import allocate_alert_round
 from app.participant_state import (
     sync_participant_completion_state,
     is_completed_state,
@@ -96,6 +97,22 @@ def get_participant_by_prolific_id(db: Session, prolific_id: str) -> Participant
     if not participant:
         raise HTTPException(status_code=404, detail="Participant not found")
     return sync_participant_completion_state(db, participant, mark_active=False)
+
+
+def _verify_session_token(participant: Participant, session_token: Optional[str]) -> None:
+    """Reject stale tabs/devices when session token is present on the participant."""
+    if participant.session_token is None:
+        return  # Legacy participant without token — allow
+    if not session_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Session token required. Please refresh to continue.",
+        )
+    if participant.session_token != session_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Session invalidated. Another tab or device started a new session. Please refresh.",
+        )
 
 
 def _is_variant_b(variant: str | None) -> bool:
@@ -171,16 +188,6 @@ def _final_message_is_actual(value: Any) -> bool:
         return False
     text = str(value).strip()
     return text not in {"", MARKER_ABORT, MARKER_DNI, MARKER_FALSE}
-
-
-def _next_alert_round(db: Session, participant_id: int, scenario_number: int) -> int:
-    current_max = db.query(func.max(ScenarioResponse.alert_round)).filter(
-        ScenarioResponse.participant_id == participant_id,
-        ScenarioResponse.scenario_number == scenario_number,
-        ScenarioResponse.alert_round.isnot(None),
-    ).scalar()
-    current_max = int(current_max or 0)
-    return max(current_max + 1, 1)
 
 
 def _resolve_scenario_llm_usage(
@@ -300,7 +307,6 @@ def build_participant_data_response(db: Session, participant: Participant) -> Pa
         baseline_assessment=BaselineAssessmentResponse.model_validate(baseline_assessment) if baseline_assessment else None,
         scenario_responses=[ScenarioResponseSchema.model_validate(sr) for sr in scenario_responses],
         post_scenario_surveys=[PostScenarioSurveySchema.model_validate(ps) for ps in post_scenario_surveys],
-        pii_disclosures=[],
         sus_responses=SusResponseSchema.model_validate(sus_responses) if sus_responses else None,
         end_of_study_survey=EndOfStudySurveySchema.model_validate(end_of_study_survey) if end_of_study_survey else None
     )
@@ -351,7 +357,7 @@ def build_participant_progress_response(db: Session, participant: Participant) -
             survey_unlocked=True,
             completion_unlocked=False,
             redirect_path="/",
-            allowed_paths=["/", "/survey/pre", "/survey/baseline"],
+            allowed_paths=["/", "/survey/baseline"],
         )
 
     for scenario_number in (1, 2, 3):
@@ -393,15 +399,19 @@ def build_participant_progress_response(db: Session, participant: Participant) -
 # =============================================================================
 @router.post("/{participant_id}/baseline-assessment", response_model=BaselineAssessmentResponse)
 def create_baseline_assessment(
+    request: Request,
     participant_id: int,
     data: BaselineAssessmentCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Create baseline self-assessment for a participant."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     progress = build_participant_progress_response(db, participant)
-    if progress.redirect_path not in {"/", "/survey/pre", "/survey/baseline"}:
+    if progress.redirect_path not in {"/", "/survey/baseline"}:
         raise HTTPException(
             status_code=409,
             detail={"message": "Step out of sequence", "redirect_path": progress.redirect_path},
@@ -434,12 +444,16 @@ def create_baseline_assessment(
 # =============================================================================
 @router.post("/{participant_id}/alert-interactions/start", response_model=ScenarioResponseSchema)
 def start_alert_interaction(
+    request: Request,
     participant_id: int,
     data: AlertInteractionStartRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Create a new Variant A interaction-log row for an alert button click."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     if _is_variant_b(participant.variant):
         raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
@@ -464,7 +478,7 @@ def start_alert_interaction(
     row = ScenarioResponse(
         participant_id=participant_id,
         scenario_number=scenario_number,
-        alert_round=_next_alert_round(db, participant_id, scenario_number),
+        alert_round=allocate_alert_round(db, participant_id, scenario_number),
         interaction_status=STATUS_PENDING,
         is_final_submission_row=MARKER_FALSE,
         participant_variant=participant.variant,
@@ -477,13 +491,17 @@ def start_alert_interaction(
 
 @router.post("/{participant_id}/alert-interactions/{scenario_response_id}/complete", response_model=ScenarioResponseSchema)
 def complete_alert_interaction(
+    request: Request,
     participant_id: int,
     scenario_response_id: int,
     data: AlertInteractionCompleteRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Persist the completed assessment output for a Variant A alert interaction row."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     if _is_variant_b(participant.variant):
         raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
@@ -499,11 +517,13 @@ def complete_alert_interaction(
         ScenarioResponse.id == scenario_response_id,
         ScenarioResponse.participant_id == participant_id,
         ScenarioResponse.scenario_number == data.scenario_number,
-    ).first()
+    ).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Scenario interaction not found")
     if row.interaction_status == STATUS_ABORT:
         raise HTTPException(status_code=409, detail="Scenario interaction already aborted")
+    if row.interaction_status == STATUS_COMPLETE:
+        raise HTTPException(status_code=409, detail="Scenario interaction already completed")
     if row.is_final_submission_row == MARKER_TRUE:
         raise HTTPException(status_code=409, detail="Scenario interaction already finalized")
 
@@ -548,13 +568,17 @@ def complete_alert_interaction(
 
 @router.post("/{participant_id}/alert-interactions/{scenario_response_id}/decision", response_model=ScenarioResponseSchema)
 def record_alert_interaction_decision(
+    request: Request,
     participant_id: int,
     scenario_response_id: int,
     data: AlertInteractionDecisionRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Persist the explicit modal choice for a Variant A alert interaction row."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     if _is_variant_b(participant.variant):
         raise HTTPException(status_code=400, detail="Alert interactions are only for Group A participants")
@@ -562,11 +586,13 @@ def record_alert_interaction_decision(
     row = db.query(ScenarioResponse).filter(
         ScenarioResponse.id == scenario_response_id,
         ScenarioResponse.participant_id == participant_id,
-    ).first()
+    ).with_for_update().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Scenario interaction not found")
     if row.interaction_status != STATUS_COMPLETE:
         raise HTTPException(status_code=409, detail="Scenario interaction is not ready for a decision")
+    if row.accepted_rewrite is not None:
+        raise HTTPException(status_code=409, detail="Decision already recorded for this interaction")
     progress = build_participant_progress_response(db, participant)
     expected_path = f"/conversation/{row.scenario_number - 1}"
     if progress.redirect_path != expected_path:
@@ -587,12 +613,16 @@ def record_alert_interaction_decision(
 
 @router.post("/{participant_id}/scenario-response", response_model=ScenarioResponseSchema)
 def create_or_update_scenario_response(
+    request: Request,
     participant_id: int,
     data: ScenarioResponseCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Legacy endpoint retained for compatibility with manual/admin usage."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
 
     if _is_variant_b(participant.variant):
@@ -642,7 +672,7 @@ def create_or_update_scenario_response(
     row = ScenarioResponse(
         participant_id=participant_id,
         scenario_number=data.scenario_number,
-        alert_round=data.alert_round or _next_alert_round(db, participant_id, data.scenario_number),
+        alert_round=data.alert_round or allocate_alert_round(db, participant_id, data.scenario_number),
         interaction_status=data.interaction_status or STATUS_COMPLETE,
         is_final_submission_row=data.is_final_submission_row or MARKER_FALSE,
         original_input=data.original_input,
@@ -679,21 +709,25 @@ def create_or_update_scenario_response(
 
 @router.post("/message")
 def record_scenario_message(
+    request: Request,
     data: ScenarioMessageRecord,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """
     Record scenario message data - compatibility endpoint for frontend.
     Maps conversation_index (0,1,2) to scenario_number (1,2,3).
     """
+    require_mobile_request(request)
     if data.conversation_index not in (0, 1, 2):
         raise HTTPException(status_code=400, detail="Invalid conversation index")
-    
+
     # Frontend currently sends prolific_id; accept numeric participant ids for manual/admin use.
     if isinstance(data.participant_id, int):
         participant = get_participant_by_id(db, data.participant_id)
     else:
         participant = get_participant_by_prolific_id(db, str(data.participant_id))
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     
     scenario_number = data.conversation_index + 1  # Convert 0-indexed to 1-indexed
@@ -721,7 +755,7 @@ def record_scenario_message(
         ScenarioResponse.participant_id == participant.id,
         ScenarioResponse.scenario_number == scenario_number,
         ScenarioResponse.is_final_submission_row == MARKER_TRUE,
-    ).all()
+    ).with_for_update().all()
     if any(_final_message_is_actual(row.final_message) for row in existing_final):
         raise HTTPException(status_code=409, detail="Scenario message already submitted")
 
@@ -800,12 +834,16 @@ def record_scenario_message(
 # =============================================================================
 @router.post("/{participant_id}/post-scenario-survey", response_model=PostScenarioSurveySchema)
 def create_post_scenario_survey(
+    request: Request,
     participant_id: int,
     data: PostScenarioSurveyCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Create post-scenario survey response for a participant."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     progress = build_participant_progress_response(db, participant)
     expected_mid = f"/survey/mid?index={data.scenario_number - 1}"
@@ -858,12 +896,16 @@ def create_post_scenario_survey(
 # =============================================================================
 @router.post("/{participant_id}/sus-responses", response_model=SusResponseSchema)
 def create_sus_responses(
+    request: Request,
     participant_id: int,
     data: SusResponseCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Create SUS responses for a participant (Group A only)."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     progress = build_participant_progress_response(db, participant)
     if progress.redirect_path not in {"/survey/end-of-study", "/survey/post"}:
@@ -915,12 +957,16 @@ def create_sus_responses(
 # =============================================================================
 @router.post("/{participant_id}/end-of-study-survey", response_model=EndOfStudySurveySchema)
 def create_end_of_study_survey(
+    request: Request,
     participant_id: int,
     data: EndOfStudySurveyCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Create end-of-study survey response for a participant."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     participant = sync_participant_completion_state(db, participant, mark_active=True)
     progress = build_participant_progress_response(db, participant)
     if progress.redirect_path not in {"/survey/end-of-study", "/survey/post"}:
@@ -936,6 +982,15 @@ def create_end_of_study_survey(
     if existing:
         raise HTTPException(status_code=409, detail="End-of-study survey already exists")
     variant_b = _is_variant_b(participant.variant)
+    if not data.realism_explanation.strip():
+        raise HTTPException(status_code=400, detail="realism_explanation is required")
+    if not data.sharing_rationale.strip():
+        raise HTTPException(status_code=400, detail="sharing_rationale is required")
+    if not variant_b:
+        if data.trust_system is None:
+            raise HTTPException(status_code=400, detail="trust_system is required for Group A")
+        if not (data.trust_explanation or "").strip():
+            raise HTTPException(status_code=400, detail="trust_explanation is required for Group A")
     trust_system_value = "[B]" if variant_b else (str(data.trust_system) if data.trust_system is not None else None)
     trust_explanation_value = "[B]" if variant_b else data.trust_explanation
 
@@ -986,21 +1041,27 @@ def create_end_of_study_survey(
 # =============================================================================
 @router.get("/{participant_id}/data", response_model=ParticipantDataResponse)
 def get_participant_data(
+    request: Request,
     participant_id: int,
     db: Session = Depends(get_db)
 ):
     """Get all data for a single participant across all tables."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
     return build_participant_data_response(db, participant)
 
 
 @router.get("/{participant_id}/progress", response_model=ParticipantProgressResponse)
 def get_participant_progress(
+    request: Request,
     participant_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
     """Get canonical participant progress and next allowed route."""
+    require_mobile_request(request)
     participant = get_participant_by_id(db, participant_id)
+    _verify_session_token(participant, x_session_token)
     return build_participant_progress_response(db, participant)
 
 

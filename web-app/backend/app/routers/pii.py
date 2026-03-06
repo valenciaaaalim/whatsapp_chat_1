@@ -3,12 +3,13 @@ PII detection endpoint using GLiNER service.
 """
 import logging
 import threading
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import sys
 import os
 from app.config import settings
+from app.utils import require_mobile_request
 
 # Import gliner_service from backend directory
 # The file is at web-app/backend/gliner_service.py
@@ -76,11 +77,12 @@ class PiiDetectResponse(BaseModel):
 
 
 @router.post("/detect", response_model=PiiDetectResponse)
-async def detect_pii(request: PiiDetectRequest):
+async def detect_pii(http_request: Request, request: PiiDetectRequest):
     """
     Detect PII in draft text and return masked text with PII spans.
     Used for live underlining in Group A only.
     """
+    require_mobile_request(http_request)
     try:
         logger.info("PII detect request received (len=%s)", len(request.draft_text))
         service = get_gliner_service()
@@ -109,8 +111,9 @@ async def detect_pii(request: PiiDetectRequest):
 
 
 @router.get("/status")
-async def pii_status():
+async def pii_status(request: Request):
     """Return whether the GLiNER model is loaded."""
+    require_mobile_request(request)
     try:
         # Non-blocking status check: do not trigger model initialization here.
         service = _gliner_service
@@ -123,7 +126,8 @@ async def pii_status():
 
 
 @router.get("/config")
-async def pii_config():
+async def pii_config(request: Request):
     """Return frontend-consumable PII config controlled by backend env vars."""
+    require_mobile_request(request)
     debounce_ms = max(0, int(settings.GLINER_DEBOUNCE_MS))
     return {"gliner_debounce_ms": debounce_ms}

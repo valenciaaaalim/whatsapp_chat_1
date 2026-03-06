@@ -1,8 +1,12 @@
 """
 Configuration settings for the web app backend.
 """
+import logging
 import os
 from typing import List, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_env(value: Optional[str]) -> Optional[str]:
@@ -16,6 +20,18 @@ def _clean_env(value: Optional[str]) -> Optional[str]:
         ):
             normalized = normalized[1:-1].strip()
     return normalized
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse env var as int, warning and falling back on invalid values."""
+    raw = _clean_env(os.getenv(name))
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning("Invalid integer for %s=%r; using default %s", name, raw, default)
+        return default
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -55,41 +71,28 @@ class Settings:
         _clean_env(os.getenv("SECOND_MODEL_THINKING_POWER"))
         or "-1"
     )
-    FIRST_MODEL_TIMEOUT_SECONDS: int = int(
-        _clean_env(os.getenv("FIRST_MODEL_TIMEOUT_SECONDS"))
-        or "20"
-    )
-    FIRST_MODEL_MAX_ATTEMPTS: int = int(
-        _clean_env(os.getenv("FIRST_MODEL_MAX_ATTEMPTS"))
-        or "1"
-    )
-    SECOND_MODEL_TIMEOUT_SECONDS: int = int(
-        _clean_env(os.getenv("SECOND_MODEL_TIMEOUT_SECONDS"))
-        or "20"
-    )
-    SECOND_MODEL_MAX_ATTEMPTS: int = int(
-        _clean_env(os.getenv("SECOND_MODEL_MAX_ATTEMPTS"))
-        or "1"
-    )
+    FIRST_MODEL_TIMEOUT_SECONDS: int = _env_int("FIRST_MODEL_TIMEOUT_SECONDS", 20)
+    FIRST_MODEL_MAX_ATTEMPTS: int = _env_int("FIRST_MODEL_MAX_ATTEMPTS", 1)
+    SECOND_MODEL_TIMEOUT_SECONDS: int = _env_int("SECOND_MODEL_TIMEOUT_SECONDS", 20)
+    SECOND_MODEL_MAX_ATTEMPTS: int = _env_int("SECOND_MODEL_MAX_ATTEMPTS", 1)
     GEMINI_INCLUDE_THOUGHTS: bool = _env_bool("GEMINI_INCLUDE_THOUGHTS", True)
 
     # Frontend GLiNER typing debounce (milliseconds), served via backend config endpoint.
-    GLINER_DEBOUNCE_MS: int = int(
-        _clean_env(os.getenv("GLINER_DEBOUNCE_MS"))
-        or "400"
-    )
+    GLINER_DEBOUNCE_MS: int = _env_int("GLINER_DEBOUNCE_MS", 400)
     
     # Server settings
     HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8080"))
+    PORT: int = _env_int("PORT", 8080)
     
-    # Prolific
-    PROLIFIC_COMPLETION_URL: str = os.getenv(
-        "PROLIFIC_COMPLETION_URL",
-        "https://app.prolific.com/submissions/complete?cc=C4V2XJZV"
-    )
+    # Prolific completion — set via env vars, no hardcoded defaults
+    PROLIFIC_COMPLETION_URL: Optional[str] = _clean_env(os.getenv("PROLIFIC_COMPLETION_URL"))
+    COMPLETION_URL: Optional[str] = _clean_env(os.getenv("COMPLETION_URL"))
+    COMPLETION_CODE: Optional[str] = _clean_env(os.getenv("COMPLETION_CODE"))
 
-    LLM_SCENARIO_MAX_CALLS: int = int(os.getenv("LLM_SCENARIO_MAX_CALLS", "10"))
+    LLM_SCENARIO_MAX_CALLS: int = _env_int("LLM_SCENARIO_MAX_CALLS", 10)
+
+    # Participation requirements
+    REQUIRE_MOBILE: bool = _env_bool("REQUIRE_MOBILE", False)
 
 
 settings = Settings()
