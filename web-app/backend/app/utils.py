@@ -31,8 +31,16 @@ def ensure_singapore_tz(value: datetime | None) -> datetime | None:
 
 
 def require_mobile_request(request: Request) -> None:
-    """Reject non-mobile requests when REQUIRE_MOBILE is enabled."""
+    """Reject non-mobile requests when REQUIRE_MOBILE is enabled.
+
+    Enforcement is limited to participant initialization so a desktop-first open
+    cannot create/rotate study state, while later mobile requests are not
+    brittle to User-Agent quirks on Safari or in-app browsers.
+    """
     if not settings.REQUIRE_MOBILE:
+        return
+    request_path = request.url.path.rstrip("/") or "/"
+    if request.method.upper() != "POST" or request_path != "/api/participants":
         return
     user_agent = request.headers.get("user-agent", "")
     if _MOBILE_UA_RE.search(user_agent):

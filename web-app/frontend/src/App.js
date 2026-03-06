@@ -195,26 +195,44 @@ function App() {
   const [initialPiiDelayDone, setInitialPiiDelayDone] = useState(false);
 
   const initializeParticipant = useCallback(async () => {
+    let lastError = null;
     try {
       // Get prolific ID from URL params if present
       const prolificId = resolveProlificId();
+      const attemptDelaysMs = [0, 1200, 2500];
 
-      const response = await axios.post(`${API_BASE_URL}/api/participants`, {
-        prolific_id: prolificId
-      });
-      
-      setParticipantId(response.data.id);
-      setVariant(response.data.variant);
-      setParticipantStatus(response.data.status || 'new');
-      setCompletionUrl(response.data.completion_url || '');
-      setProlificId(prolificId);
-      if (response.data.session_token) {
-        axios.defaults.headers.common['X-Session-Token'] = response.data.session_token;
-        setSessionToken(response.data.session_token);
+      for (let attempt = 0; attempt < attemptDelaysMs.length; attempt += 1) {
+        if (attemptDelaysMs[attempt] > 0) {
+          await sleep(attemptDelaysMs[attempt]);
+        }
+        try {
+          const response = await axios.post(`${API_BASE_URL}/api/participants`, {
+            prolific_id: prolificId
+          }, {
+            timeout: 15000
+          });
+
+          setParticipantId(response.data.id);
+          setVariant(response.data.variant);
+          setParticipantStatus(response.data.status || 'new');
+          setCompletionUrl(response.data.completion_url || '');
+          setProlificId(prolificId);
+          if (response.data.session_token) {
+            axios.defaults.headers.common['X-Session-Token'] = response.data.session_token;
+            setSessionToken(response.data.session_token);
+          }
+          return;
+        } catch (error) {
+          lastError = error;
+          const status = error?.response?.status;
+          const shouldRetry = !status || status >= 500 || status === 429;
+          if (!shouldRetry || attempt === attemptDelaysMs.length - 1) {
+            throw error;
+          }
+        }
       }
-
     } catch (error) {
-      console.error('Error initializing participant:', error);
+      console.error('Error initializing participant:', lastError || error);
     } finally {
       setLoading(false);
     }
