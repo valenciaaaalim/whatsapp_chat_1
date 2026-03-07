@@ -57,6 +57,7 @@ STATUS_COMPLETE = "[COMPLETE]"
 STATUS_ABORT = "[ABORT]"
 STATUS_DNI = "[DNI]"
 STATUS_B = "[B]"
+END_OF_STUDY_MIN_WORDS = 15
 
 
 def calculate_sus_score(sus_1, sus_2, sus_3, sus_4, sus_5, sus_6, sus_7, sus_8, sus_9, sus_10):
@@ -181,6 +182,13 @@ def _normalize_token_field(value: Any) -> int | None:
         return int(text)
     except (TypeError, ValueError):
         return 0
+
+
+def _word_count(value: Any) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    return len([part for part in text.split() if part])
 
 
 def _final_message_is_actual(value: Any) -> bool:
@@ -986,11 +994,26 @@ def create_end_of_study_survey(
         raise HTTPException(status_code=400, detail="realism_explanation is required")
     if not data.sharing_rationale.strip():
         raise HTTPException(status_code=400, detail="sharing_rationale is required")
+    if _word_count(data.realism_explanation) < END_OF_STUDY_MIN_WORDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"realism_explanation must contain at least {END_OF_STUDY_MIN_WORDS} words",
+        )
+    if _word_count(data.sharing_rationale) < END_OF_STUDY_MIN_WORDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sharing_rationale must contain at least {END_OF_STUDY_MIN_WORDS} words",
+        )
     if not variant_b:
         if data.trust_system is None:
             raise HTTPException(status_code=400, detail="trust_system is required for Group A")
         if not (data.trust_explanation or "").strip():
             raise HTTPException(status_code=400, detail="trust_explanation is required for Group A")
+        if _word_count(data.trust_explanation) < END_OF_STUDY_MIN_WORDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"trust_explanation must contain at least {END_OF_STUDY_MIN_WORDS} words",
+            )
     trust_system_value = "[B]" if variant_b else (str(data.trust_system) if data.trust_system is not None else None)
     trust_explanation_value = "[B]" if variant_b else data.trust_explanation
 

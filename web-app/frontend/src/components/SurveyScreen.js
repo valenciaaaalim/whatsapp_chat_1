@@ -6,6 +6,12 @@ import { getRedirectPathFrom409 } from '../utils/apiErrors';
 
 const API_BASE_URL = process.env.REACT_APP_BACKEND_BASE_URL || 'http://localhost:8080';
 const REDIRECT_ABORT = 'redirect_abort';
+const END_OF_STUDY_MIN_WORDS = 15;
+const END_OF_STUDY_MIN_WORD_IDS = new Set([
+  'end_realism_explanation',
+  'end_sharing_rationale',
+  'end_trust_explanation'
+]);
 
 // Baseline Self-Assessment (previously pre-survey) - 4 Likert 1-7 items
 const BASELINE_QUESTIONS = [
@@ -83,6 +89,11 @@ const POST_SCENARIO_COMMON_QUESTIONS = [
 
 // Post-Scenario Survey Questions - Group A only (last 3 questions)
 const POST_SCENARIO_A_QUESTIONS = [
+  {
+    id: 'post_scenario_a_note',
+    type: 'note',
+    text: 'For the remaining 3 questions on this page, if you did not see any warnings, please select "Strongly Disagree".'
+  },
   {
     id: 'post_scenario_warning_clarity',
     question: 'The warning was clear.',
@@ -211,6 +222,11 @@ const END_OF_STUDY_COMMON_QUESTIONS = [
 // End-of-Study Survey: Group A only questions
 const END_OF_STUDY_A_QUESTIONS = [
   {
+    id: 'end_a_note',
+    type: 'note',
+    text: 'For the question below, if you did not see any warnings, please select "Strongly Disagree".'
+  },
+  {
     id: 'end_trust_system',
     question: 'Overall, I trusted the system\'s warnings and suggestions.',
     type: 'likert',
@@ -258,6 +274,17 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   const [otherText, setOtherText] = useState(''); // For "Other" option text input
   const surveyContentRef = useRef(null);
   const questionRefs = useRef({});
+
+  const countWords = (value) => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).filter(Boolean).length;
+  };
+
+  const requiresEndStudyMinWords = (questionId) => (
+    (surveyType === 'post' || surveyType === 'end-of-study') &&
+    END_OF_STUDY_MIN_WORD_IDS.has(questionId)
+  );
   // Reset otherText when survey type or conversation index changes
   useEffect(() => {
     setOtherText('');
@@ -402,10 +429,17 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   // Check if all questions are answered (with valid non-empty responses)
   const allQuestionsAnswered = () => {
     return questions.every(q => {
+      if (q.type === 'note') return true;
       const response = responses[q.id];
       // Text questions: must have non-empty text
       if (q.type === 'text') {
-        return response !== undefined && response !== null && response.trim() !== '';
+        if (response === undefined || response === null || response.trim() === '') {
+          return false;
+        }
+        if (requiresEndStudyMinWords(q.id)) {
+          return countWords(response) >= END_OF_STUDY_MIN_WORDS;
+        }
+        return true;
       }
       // Checkbox questions: must have at least one selection
       if (q.type === 'checkbox') {
@@ -426,6 +460,7 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   const validateResponses = () => {
     const nextErrors = {};
     questions.forEach(q => {
+      if (q.type === 'note') return;
       const response = responses[q.id];
       if (q.type === 'checkbox') {
         if (!Array.isArray(response) || response.length === 0) {
@@ -440,6 +475,8 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
       if (q.type === 'text') {
         if (!response || response.trim() === '') {
           nextErrors[q.id] = 'Please provide an answer.';
+        } else if (requiresEndStudyMinWords(q.id) && countWords(response) < END_OF_STUDY_MIN_WORDS) {
+          nextErrors[q.id] = `Please write at least ${END_OF_STUDY_MIN_WORDS} words.`;
         }
         return;
       }
@@ -651,6 +688,8 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
         </div>
       );
     } else if (question.type === 'text') {
+      const wordCount = countWords(responses[question.id] || '');
+      const showEndStudyWordRule = requiresEndStudyMinWords(question.id);
       return (
         <div className="text-input-container">
           <textarea
@@ -669,6 +708,16 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
               resize: 'vertical'
             }}
           />
+          {showEndStudyWordRule && (
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ fontWeight: 700, fontSize: '14px', color: '#333' }}>
+                Minimum {END_OF_STUDY_MIN_WORDS} words required.
+              </div>
+              <div style={{ fontSize: '14px', color: '#666', marginTop: '2px' }}>
+                Words: {wordCount}
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -686,21 +735,30 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
         <p>Please answer the following questions{surveyType === 'baseline' ? '.' : ' about your experience.'}</p>
         
         <div className="survey-questions">
-          {questions.map((question) => (
-            <div
-              key={question.id}
-              className="survey-question"
-              ref={(el) => {
-                questionRefs.current[question.id] = el;
-              }}
-            >
-              {errors[question.id] && (
-                <div className="question-error">{errors[question.id]}</div>
-              )}
-              <label className="question-label">{question.question}</label>
-              {renderQuestion(question)}
-            </div>
-          ))}
+          {questions.map((question) => {
+            if (question.type === 'note') {
+              return (
+                <div key={question.id} className="survey-note">
+                  {question.text}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={question.id}
+                className="survey-question"
+                ref={(el) => {
+                  questionRefs.current[question.id] = el;
+                }}
+              >
+                {errors[question.id] && (
+                  <div className="question-error">{errors[question.id]}</div>
+                )}
+                <label className="question-label">{question.question}</label>
+                {renderQuestion(question)}
+              </div>
+            );
+          })}
         </div>
 
         {submitError && (
