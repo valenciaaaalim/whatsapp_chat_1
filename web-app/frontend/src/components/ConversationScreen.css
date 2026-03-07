@@ -37,14 +37,13 @@
   --drawer-width: min(75vw, calc(100vw - var(--tab-width)));
   position: absolute;
   top: 0;
-  bottom: var(--composer-height, 60px);
+  bottom: 0;
   right: 0;
   width: calc(var(--drawer-width) + var(--tab-width));
   z-index: 1200;
   transform: translateX(var(--drawer-width));
   transition: transform 0.3s ease;
   pointer-events: none;
-  /* Sit above ChatHeader but stop above the composer */
 }
 
 .instructions-drawer > * {
@@ -101,7 +100,6 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.68);
   z-index: 1100;
-  /* Covers entire conversation-screen including ChatHeader */
 }
 
 .drawer-panel h2 {
