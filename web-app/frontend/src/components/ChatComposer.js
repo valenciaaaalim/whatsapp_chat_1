@@ -56,16 +56,6 @@ function ChatComposer({
     }
   }, [draftText, variant]);
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      if (isSending || sendDisabled || e.repeat) {
-        return;
-      }
-      onSend();
-    }
-  };
-
   const handleInputClick = () => {
     if (variant !== 'A' || piiSpans.length === 0 || !textareaRef.current) {
       return;
@@ -190,7 +180,6 @@ function ChatComposer({
             placeholder="Type a message"
             value={draftText}
             onChange={(e) => onTextChange(e.target.value)}
-            onKeyDown={handleKeyDown}
             onScroll={handleScroll}
             onClick={handleInputClick}
             rows={1}

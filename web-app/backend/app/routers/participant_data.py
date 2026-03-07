@@ -286,18 +286,18 @@ def _latest_scenario_response(
 
 
 def _participant_saw_any_warning(db: Session, participant_id: int) -> bool:
-    """Return True when the participant has at least one successful LLM output."""
-    return db.query(LLMOutput.id).filter(
-        LLMOutput.participant_id == participant_id,
-        LLMOutput.response_json.isnot(None),
+    """Return True when the participant actually saw at least one completed warning output."""
+    return db.query(ScenarioResponse.id).filter(
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.interaction_status == STATUS_COMPLETE,
     ).first() is not None
 
 
 def _participant_warning_scenarios(db: Session, participant_id: int) -> list[int]:
-    """Return scenario numbers that produced at least one successful warning output."""
-    rows = db.query(LLMOutput.scenario_id).filter(
-        LLMOutput.participant_id == participant_id,
-        LLMOutput.response_json.isnot(None),
+    """Return scenario numbers where the participant actually saw a completed warning output."""
+    rows = db.query(ScenarioResponse.scenario_number).filter(
+        ScenarioResponse.participant_id == participant_id,
+        ScenarioResponse.interaction_status == STATUS_COMPLETE,
     ).distinct().all()
     return sorted(
         int(row[0]) for row in rows
