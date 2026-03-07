@@ -90,11 +90,6 @@ const POST_SCENARIO_COMMON_QUESTIONS = [
 // Post-Scenario Survey Questions - Group A only (last 3 questions)
 const POST_SCENARIO_A_QUESTIONS = [
   {
-    id: 'post_scenario_a_note',
-    type: 'note',
-    text: 'For the remaining 3 questions on this page, if you did not see any warnings, please select "Strongly Disagree".'
-  },
-  {
     id: 'post_scenario_warning_clarity',
     question: 'The warning was clear.',
     type: 'likert',
@@ -222,11 +217,6 @@ const END_OF_STUDY_COMMON_QUESTIONS = [
 // End-of-Study Survey: Group A only questions
 const END_OF_STUDY_A_QUESTIONS = [
   {
-    id: 'end_a_note',
-    type: 'note',
-    text: 'For the question below, if you did not see any warnings, please select "Strongly Disagree".'
-  },
-  {
     id: 'end_trust_system',
     question: 'Overall, I trusted the system\'s warnings and suggestions.',
     type: 'likert',
@@ -247,31 +237,13 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
   const surveyType = params.type || 'mid';
   const conversationIndex = searchParams.get('index');
   
-  // Determine which questions to show based on survey type and variant
-  let questions = [];
-  if (surveyType === 'baseline') {
-    // Baseline Self-Assessment (previously pre-survey)
-    questions = BASELINE_QUESTIONS;
-  } else if (surveyType === 'mid' || surveyType === 'post-scenario') {
-    // Post-Scenario Survey: Common questions + Group A specific questions
-    questions = [...POST_SCENARIO_COMMON_QUESTIONS];
-    if (variant === 'A') {
-      questions = [...questions, ...POST_SCENARIO_A_QUESTIONS];
-    }
-  } else if (surveyType === 'post' || surveyType === 'end-of-study') {
-    // End-of-Study Survey: SUS (Group A only) + Common questions + Group A specific questions
-    if (variant === 'A') {
-      questions = [...SUS_QUESTIONS, ...END_OF_STUDY_COMMON_QUESTIONS, ...END_OF_STUDY_A_QUESTIONS];
-    } else {
-      questions = [...END_OF_STUDY_COMMON_QUESTIONS];
-    }
-  }
-  
   const [responses, setResponses] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [errors, setErrors] = useState({});
   const [otherText, setOtherText] = useState(''); // For "Other" option text input
+  const [showVariantAPostQuestions, setShowVariantAPostQuestions] = useState(variant === 'A');
+  const [showVariantAEndQuestions, setShowVariantAEndQuestions] = useState(variant === 'A');
   const surveyContentRef = useRef(null);
   const questionRefs = useRef({});
 
@@ -291,11 +263,64 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
     setResponses({});
     setSubmitError(null);
     setErrors({});
+    setShowVariantAPostQuestions(variant === 'A');
+    setShowVariantAEndQuestions(variant === 'A');
     window.scrollTo(0, 0);
     if (surveyContentRef.current) {
       surveyContentRef.current.scrollTop = 0;
     }
-  }, [surveyType, conversationIndex]);
+  }, [surveyType, conversationIndex, variant]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEndSurveyMode = async () => {
+      if (variant !== 'A' || !participantId) {
+        return;
+      }
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/participants/${participantId}/progress`);
+        if (!cancelled) {
+          const warningScenarios = Array.isArray(response.data?.warning_scenarios)
+            ? response.data.warning_scenarios.map((value) => Number(value))
+            : [];
+          const currentScenarioNumber = parseInt(conversationIndex || '0', 10) + 1;
+          if (surveyType === 'mid' || surveyType === 'post-scenario') {
+            setShowVariantAPostQuestions(warningScenarios.includes(currentScenarioNumber));
+          }
+          if (surveyType === 'post' || surveyType === 'end-of-study') {
+          setShowVariantAEndQuestions(Boolean(response.data?.saw_any_warning));
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading warning visibility state:', error);
+          setShowVariantAPostQuestions(true);
+          setShowVariantAEndQuestions(true);
+        }
+      }
+    };
+    loadEndSurveyMode();
+    return () => {
+      cancelled = true;
+    };
+  }, [surveyType, variant, participantId, conversationIndex]);
+
+  // Determine which questions to show based on survey type and variant
+  let questions = [];
+  if (surveyType === 'baseline') {
+    questions = BASELINE_QUESTIONS;
+  } else if (surveyType === 'mid' || surveyType === 'post-scenario') {
+    questions = [...POST_SCENARIO_COMMON_QUESTIONS];
+    if (variant === 'A' && showVariantAPostQuestions) {
+      questions = [...questions, ...POST_SCENARIO_A_QUESTIONS];
+    }
+  } else if (surveyType === 'post' || surveyType === 'end-of-study') {
+    if (variant === 'A' && showVariantAEndQuestions) {
+      questions = [...SUS_QUESTIONS, ...END_OF_STUDY_COMMON_QUESTIONS, ...END_OF_STUDY_A_QUESTIONS];
+    } else {
+      questions = [...END_OF_STUDY_COMMON_QUESTIONS];
+    }
+  }
 
   // Scroll focused input into view when keyboard opens on mobile
   useEffect(() => {
@@ -537,15 +562,15 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
               ? (otherText || '').trim()
               : null,
             // Group A only fields (nullable)
-            warning_clarity: variant === 'A' ? parseInt(responses['post_scenario_warning_clarity']) : null,
-            warning_helpful: variant === 'A' ? parseInt(responses['post_scenario_warning_helpful']) : null,
-            rewrite_quality: variant === 'A' ? parseInt(responses['post_scenario_rewrite_quality']) : null
+            warning_clarity: variant === 'A' && showVariantAPostQuestions ? parseInt(responses['post_scenario_warning_clarity']) : null,
+            warning_helpful: variant === 'A' && showVariantAPostQuestions ? parseInt(responses['post_scenario_warning_helpful']) : null,
+            rewrite_quality: variant === 'A' && showVariantAPostQuestions ? parseInt(responses['post_scenario_rewrite_quality']) : null
           }),
           'Post-scenario survey'
         );
       } else if (surveyType === 'post' || surveyType === 'end-of-study') {
         // End-of-Study Survey
-        if (variant === 'A') {
+        if (variant === 'A' && showVariantAEndQuestions) {
           // Submit SUS responses (Group A only)
           await postSurvey(
             () => axios.post(`${API_BASE_URL}/api/participants/${participantId}/sus-responses`, {
@@ -572,8 +597,8 @@ function SurveyScreen({ participantId, participantProlificId, variant }) {
             overall_confidence: parseInt(responses['end_overall_confidence']),
             sharing_rationale: responses['end_sharing_rationale'] || '',
             // Group A only fields (nullable)
-            trust_system: variant === 'A' ? parseInt(responses['end_trust_system']) : null,
-            trust_explanation: variant === 'A' ? (responses['end_trust_explanation'] || '') : null
+            trust_system: variant === 'A' && showVariantAEndQuestions ? parseInt(responses['end_trust_system']) : null,
+            trust_explanation: variant === 'A' && showVariantAEndQuestions ? (responses['end_trust_explanation'] || '') : null
           }),
           'End-of-study survey'
         );

@@ -380,6 +380,8 @@ class ParticipantProgressResponse(BaseModel):
     max_conversation_index_unlocked: int
     survey_unlocked: bool
     completion_unlocked: bool
+    saw_any_warning: bool = False
+    warning_scenarios: List[int] = Field(default_factory=list)
     redirect_path: str
     allowed_paths: List[str] = Field(default_factory=list)
 

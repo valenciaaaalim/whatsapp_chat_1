@@ -15,7 +15,8 @@ from app.models import (
     ScenarioResponse,
     PostScenarioSurvey,
     SusResponse,
-    EndOfStudySurvey
+    EndOfStudySurvey,
+    LLMOutput,
 )
 from app.schemas import (
     BaselineAssessmentCreate,
@@ -58,6 +59,7 @@ STATUS_ABORT = "[ABORT]"
 STATUS_DNI = "[DNI]"
 STATUS_B = "[B]"
 END_OF_STUDY_MIN_WORDS = 15
+MARKER_NO_SHOW = "[NO SHOW]"
 
 
 def calculate_sus_score(sus_1, sus_2, sus_3, sus_4, sus_5, sus_6, sus_7, sus_8, sus_9, sus_10):
@@ -283,6 +285,26 @@ def _latest_scenario_response(
     ).first()
 
 
+def _participant_saw_any_warning(db: Session, participant_id: int) -> bool:
+    """Return True when the participant has at least one successful LLM output."""
+    return db.query(LLMOutput.id).filter(
+        LLMOutput.participant_id == participant_id,
+        LLMOutput.response_json.isnot(None),
+    ).first() is not None
+
+
+def _participant_warning_scenarios(db: Session, participant_id: int) -> list[int]:
+    """Return scenario numbers that produced at least one successful warning output."""
+    rows = db.query(LLMOutput.scenario_id).filter(
+        LLMOutput.participant_id == participant_id,
+        LLMOutput.response_json.isnot(None),
+    ).distinct().all()
+    return sorted(
+        int(row[0]) for row in rows
+        if row and row[0] is not None
+    )
+
+
 def build_participant_data_response(db: Session, participant: Participant) -> ParticipantDataResponse:
     """Build full normalized participant response payload."""
     participant_id = participant.id
@@ -323,6 +345,8 @@ def build_participant_data_response(db: Session, participant: Participant) -> Pa
 def build_participant_progress_response(db: Session, participant: Participant) -> ParticipantProgressResponse:
     """Compute canonical progression state and redirect target for a participant."""
     participant_id = participant.id
+    warning_scenarios = _participant_warning_scenarios(db, participant_id)
+    saw_any_warning = bool(warning_scenarios)
     baseline_exists = db.query(BaselineAssessment.id).filter(
         BaselineAssessment.participant_id == participant_id
     ).first() is not None
@@ -354,6 +378,8 @@ def build_participant_progress_response(db: Session, participant: Participant) -
             max_conversation_index_unlocked=2,
             survey_unlocked=False,
             completion_unlocked=True,
+            saw_any_warning=saw_any_warning,
+            warning_scenarios=warning_scenarios,
             redirect_path="/completion",
             allowed_paths=["/completion"],
         )
@@ -364,6 +390,8 @@ def build_participant_progress_response(db: Session, participant: Participant) -
             max_conversation_index_unlocked=-1,
             survey_unlocked=True,
             completion_unlocked=False,
+            saw_any_warning=saw_any_warning,
+            warning_scenarios=warning_scenarios,
             redirect_path="/",
             allowed_paths=["/", "/survey/baseline"],
         )
@@ -377,6 +405,8 @@ def build_participant_progress_response(db: Session, participant: Participant) -
                 max_conversation_index_unlocked=conversation_index,
                 survey_unlocked=False,
                 completion_unlocked=False,
+                saw_any_warning=saw_any_warning,
+                warning_scenarios=warning_scenarios,
                 redirect_path=path,
                 allowed_paths=[path],
             )
@@ -388,6 +418,8 @@ def build_participant_progress_response(db: Session, participant: Participant) -
                 max_conversation_index_unlocked=conversation_index,
                 survey_unlocked=True,
                 completion_unlocked=False,
+                saw_any_warning=saw_any_warning,
+                warning_scenarios=warning_scenarios,
                 redirect_path=mid_path,
                 allowed_paths=[mid_path, post_path],
             )
@@ -397,6 +429,8 @@ def build_participant_progress_response(db: Session, participant: Participant) -
         max_conversation_index_unlocked=2,
         survey_unlocked=True,
         completion_unlocked=False,
+        saw_any_warning=saw_any_warning,
+        warning_scenarios=warning_scenarios,
         redirect_path="/survey/end-of-study",
         allowed_paths=["/survey/end-of-study", "/survey/post"],
     )
@@ -875,9 +909,11 @@ def create_post_scenario_survey(
     included_pii_types_value = json.dumps(data.included_pii_types or [], ensure_ascii=True)
     included_pii_other_text_value = (data.included_pii_other_text or "").strip() or None
     variant_b = _is_variant_b(participant.variant)
-    warning_clarity_value = "[B]" if variant_b else (str(data.warning_clarity) if data.warning_clarity is not None else None)
-    warning_helpful_value = "[B]" if variant_b else (str(data.warning_helpful) if data.warning_helpful is not None else None)
-    rewrite_quality_value = "[B]" if variant_b else (str(data.rewrite_quality) if data.rewrite_quality is not None else None)
+    warning_scenarios = _participant_warning_scenarios(db, participant_id)
+    scenario_saw_warning = data.scenario_number in warning_scenarios
+    warning_clarity_value = "[B]" if variant_b else ("0" if not scenario_saw_warning else (str(data.warning_clarity) if data.warning_clarity is not None else None))
+    warning_helpful_value = "[B]" if variant_b else ("0" if not scenario_saw_warning else (str(data.warning_helpful) if data.warning_helpful is not None else None))
+    rewrite_quality_value = "[B]" if variant_b else ("0" if not scenario_saw_warning else (str(data.rewrite_quality) if data.rewrite_quality is not None else None))
 
     post_survey = PostScenarioSurvey(
         participant_id=participant_id,
@@ -924,6 +960,8 @@ def create_sus_responses(
     
     if participant.variant != "A":
         raise HTTPException(status_code=400, detail="SUS responses are only for Group A participants")
+    if not _participant_saw_any_warning(db, participant_id):
+        raise HTTPException(status_code=400, detail="SUS responses are not applicable when no warnings were shown")
     
     # Check if SUS responses already exist
     existing = db.query(SusResponse).filter(
@@ -990,6 +1028,7 @@ def create_end_of_study_survey(
     if existing:
         raise HTTPException(status_code=409, detail="End-of-study survey already exists")
     variant_b = _is_variant_b(participant.variant)
+    saw_any_warning = _participant_saw_any_warning(db, participant_id)
     if not data.realism_explanation.strip():
         raise HTTPException(status_code=400, detail="realism_explanation is required")
     if not data.sharing_rationale.strip():
@@ -1004,7 +1043,7 @@ def create_end_of_study_survey(
             status_code=400,
             detail=f"sharing_rationale must contain at least {END_OF_STUDY_MIN_WORDS} words",
         )
-    if not variant_b:
+    if not variant_b and saw_any_warning:
         if data.trust_system is None:
             raise HTTPException(status_code=400, detail="trust_system is required for Group A")
         if not (data.trust_explanation or "").strip():
@@ -1014,8 +1053,8 @@ def create_end_of_study_survey(
                 status_code=400,
                 detail=f"trust_explanation must contain at least {END_OF_STUDY_MIN_WORDS} words",
             )
-    trust_system_value = "[B]" if variant_b else (str(data.trust_system) if data.trust_system is not None else None)
-    trust_explanation_value = "[B]" if variant_b else data.trust_explanation
+    trust_system_value = "[B]" if variant_b else ("0" if not saw_any_warning else (str(data.trust_system) if data.trust_system is not None else None))
+    trust_explanation_value = "[B]" if variant_b else (MARKER_NO_SHOW if not saw_any_warning else data.trust_explanation)
 
     end_survey = EndOfStudySurvey(
         participant_id=participant_id,
@@ -1028,6 +1067,27 @@ def create_end_of_study_survey(
         participant_variant=participant.variant,
     )
     db.add(end_survey)
+
+    if not variant_b and not saw_any_warning:
+        existing_sus = db.query(SusResponse).filter(
+            SusResponse.participant_id == participant_id
+        ).first()
+        if existing_sus is None:
+            db.add(SusResponse(
+                participant_id=participant_id,
+                sus_1=0,
+                sus_2=0,
+                sus_3=0,
+                sus_4=0,
+                sus_5=0,
+                sus_6=0,
+                sus_7=0,
+                sus_8=0,
+                sus_9=0,
+                sus_10=0,
+                sus_score=0,
+                participant_variant=participant.variant,
+            ))
     
     # Mark participant as complete
     participant.is_complete = COMPLETE_STATE_TRUE
