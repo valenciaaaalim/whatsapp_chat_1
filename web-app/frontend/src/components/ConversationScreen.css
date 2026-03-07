@@ -37,14 +37,14 @@
   --drawer-width: min(75vw, calc(100vw - var(--tab-width)));
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: var(--composer-height, 60px);
   right: 0;
   width: calc(var(--drawer-width) + var(--tab-width));
   z-index: 1200;
   transform: translateX(var(--drawer-width));
   transition: transform 0.3s ease;
   pointer-events: none;
-  /* Sit above ChatHeader so the panel covers the contact bar */
+  /* Sit above ChatHeader but stop above the composer */
 }
 
 .instructions-drawer > * {
